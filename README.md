@@ -1,10 +1,13 @@
 # agenthive-mcp
 
+![agenthive-mcp](static/hero.svg)
+
 An [MCP](https://modelcontextprotocol.io) server that exposes
-[AgentHive](https://github.com/polarpoint-io/agenthive)'s two agent-facing
-calls - `retrieve_context` and `log_session` - as native tools for Cursor
-and Claude Code, instead of needing a `CLAUDE.md` / `.cursor/rules`
-instruction block that calls AgentHive's HTTP API by hand.
+[AgentHive](https://github.com/polarpoint-io/agenthive)'s member-level
+calls - `retrieve_context`, `log_session`, `create_agent`, `list_agents`,
+`create_task`, and `list_tasks` - as native tools for Cursor and Claude
+Code, instead of needing a `CLAUDE.md` / `.cursor/rules` instruction
+block that calls AgentHive's HTTP API by hand.
 
 This repo doesn't run AgentHive itself, and doesn't depend on that repo's
 code - it's a thin local wrapper: your IDE spawns `mcp_server.py` as a
@@ -12,7 +15,9 @@ subprocess on your own machine, it makes plain HTTP calls to whatever
 `AGENTHIVE_URL` you already have running, and it holds no state of its
 own. It can do exactly what your `AGENTHIVE_TOKEN` already lets you do
 over the API directly - the member/admin split and the pending-approval
-review gate are both enforced entirely server-side by AgentHive itself.
+review gate are both enforced entirely server-side by AgentHive itself
+(see "Tools" below for exactly what's exposed and what deliberately
+isn't).
 
 ## Setup
 
@@ -61,15 +66,31 @@ learned.
 
 ## Tools
 
+Every tool here is a [member]-role call - the same tier your personal
+token already grants over the API directly. Admin-only calls
+(`list_pending`/`approve`/`reject`, user management, auto-approve rules)
+are deliberately not exposed as tools: they exist so a *human* operates
+the review gate from the review UI or an admin script, and turning them
+into agent-callable tools would let an agent approve or reject its own
+pending memory, which defeats the point of the gate. See AgentHive's
+`ADR.md` for why the gate exists, and its README for those calls.
+
 - **`retrieve_context(anchor, hops=2, hub_cutoff=15)`** - a bounded
   neighborhood of this team's reviewed, approved memory around a topic.
   Returns `neighborhood` (the matched nodes) and `approx_tokens` (what
   folding them into context actually costs).
-- **`log_session(title, body, tags=None, links=None)`** - logs what
-  happened this session as a memory node. Starts `pending` and is
-  invisible to `retrieve_context` until an admin approves it (or it
-  matches an auto-approve rule) - this is a deliberate review gate, not a
-  bug. See AgentHive's `ADR.md` for why.
+- **`log_session(title, body, tags=None, links=None, agent_id=None, task_id=None)`**
+  - logs what happened this session as a memory node. Starts `pending`
+  and is invisible to `retrieve_context` until an admin approves it (or
+  it matches an auto-approve rule) - this is a deliberate review gate,
+  not a bug. See AgentHive's `ADR.md` for why. `agent_id`/`task_id` are
+  optional ids from `create_agent`/`create_task`.
+- **`create_agent(name, description="", system_prompt="")`** / **`list_agents()`**
+  - register (or look up) an agent identity with the team, so sessions
+  can be attributed to it and an admin can auto-approve by agent.
+- **`create_task(name, description="")`** / **`list_tasks()`** -
+  register (or look up) a task, so sessions can be scoped to it and
+  filtered together later.
 
 ## Testing
 

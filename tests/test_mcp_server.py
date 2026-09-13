@@ -55,7 +55,11 @@ def test_tools_are_discoverable(fake_server):
                 return {t.name for t in tools.tools}
 
     names = anyio.run(run)
-    assert {"retrieve_context", "log_session"} <= names
+    assert {
+        "retrieve_context", "log_session",
+        "create_agent", "list_agents",
+        "create_task", "list_tasks",
+    } <= names
 
 
 def test_log_then_retrieve_round_trips_through_the_real_wire_format(fake_server):
@@ -97,6 +101,82 @@ def test_log_then_retrieve_round_trips_through_the_real_wire_format(fake_server)
 
     after = anyio.run(retrieve_after_approval)
     assert [n["title"] for n in after["neighborhood"]] == ["MCP round trip"]
+
+
+def test_create_agent_then_list_agents_round_trips(fake_server):
+    async def create():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    "create_agent",
+                    {"name": "bug-fix engineer", "description": "fixes prod incidents"},
+                )
+                assert not result.isError, result.content
+                return _result_json(result)
+
+    created = anyio.run(create)
+    assert created["name"] == "bug-fix engineer"
+    assert created["id"]
+
+    async def list_them():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("list_agents", {})
+                return _result_json(result)
+
+    listed = anyio.run(list_them)
+    assert [a["id"] for a in listed["agents"]] == [created["id"]]
+
+
+def test_create_task_then_list_tasks_round_trips(fake_server):
+    async def create():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    "create_task",
+                    {"name": "migrate to RKE2", "description": "cluster migration"},
+                )
+                assert not result.isError, result.content
+                return _result_json(result)
+
+    created = anyio.run(create)
+    assert created["name"] == "migrate to RKE2"
+    assert created["id"]
+
+    async def list_them():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("list_tasks", {})
+                return _result_json(result)
+
+    listed = anyio.run(list_them)
+    assert [t["id"] for t in listed["tasks"]] == [created["id"]]
+
+
+def test_log_session_attaches_agent_and_task_ids(fake_server):
+    async def run():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(
+                    "log_session",
+                    {
+                        "title": "scoped session",
+                        "body": "linked to an agent and a task",
+                        "agent_id": "agent-1",
+                        "task_id": "task-1",
+                    },
+                )
+                assert not result.isError, result.content
+                return _result_json(result)
+
+    written = anyio.run(run)
+    assert written["agent_id"] == "agent-1"
+    assert written["task_id"] == "task-1"
 
 
 def test_wrong_token_surfaces_the_servers_own_error_message(fake_server):

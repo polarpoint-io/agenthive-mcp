@@ -1,10 +1,10 @@
 """
 A small, real local HTTP server standing in for AgentHive itself - just
-enough of the wire protocol (auth header, the two endpoints
-mcp_server.py calls, the pending/approve/retrieve shape, and the error
-response format) to prove this repo's own HTTP plumbing is correct: the
-right method/path/headers/body go out, and the right thing comes back
-for a success, an auth failure, and an unreachable host.
+enough of the wire protocol (auth header, the endpoints mcp_server.py
+calls, the pending/approve/retrieve shape, and the error response
+format) to prove this repo's own HTTP plumbing is correct: the right
+method/path/headers/body go out, and the right thing comes back for a
+success, an auth failure, and an unreachable host.
 
 This is NOT a test of AgentHive's own behavior (the approval gate, team
 isolation, the retrieval algorithm, etc. - that's AgentHive's own test
@@ -24,6 +24,8 @@ class FakeAgentHive:
         self.token = token
         self.team_id = team_id
         self.nodes = {}
+        self.agents = {}
+        self.tasks = {}
         self._next_id = 1
 
         server = self
@@ -61,6 +63,8 @@ class FakeAgentHive:
                         "body": body.get("body"),
                         "tags": body.get("tags", []),
                         "links": body.get("links", []),
+                        "agent_id": body.get("agent_id"),
+                        "task_id": body.get("task_id"),
                         "status": "pending",
                     }
                     self._send_json(200, dict(server.nodes[node_id]))
@@ -73,6 +77,29 @@ class FakeAgentHive:
                         return
                     server.nodes[node_id]["status"] = "approved"
                     self._send_json(200, dict(server.nodes[node_id]))
+                    return
+
+                if parsed.path == f"/teams/{server.team_id}/agents":
+                    agent_id = f"agent-{server._next_id}"
+                    server._next_id += 1
+                    server.agents[agent_id] = {
+                        "id": agent_id,
+                        "name": body.get("name"),
+                        "description": body.get("description", ""),
+                        "system_prompt": body.get("system_prompt", ""),
+                    }
+                    self._send_json(200, dict(server.agents[agent_id]))
+                    return
+
+                if parsed.path == f"/teams/{server.team_id}/tasks":
+                    task_id = f"task-{server._next_id}"
+                    server._next_id += 1
+                    server.tasks[task_id] = {
+                        "id": task_id,
+                        "name": body.get("name"),
+                        "description": body.get("description", ""),
+                    }
+                    self._send_json(200, dict(server.tasks[task_id]))
                     return
 
                 self._send_json(404, {"error": "not found"})
@@ -96,6 +123,14 @@ class FakeAgentHive:
                         "neighborhood_count": len(matched),
                         "approx_tokens": sum(len((n["body"] or "")) // 4 for n in matched),
                     })
+                    return
+
+                if parsed.path == f"/teams/{server.team_id}/agents":
+                    self._send_json(200, {"agents": list(server.agents.values())})
+                    return
+
+                if parsed.path == f"/teams/{server.team_id}/tasks":
+                    self._send_json(200, {"tasks": list(server.tasks.values())})
                     return
 
                 self._send_json(404, {"error": "not found"})

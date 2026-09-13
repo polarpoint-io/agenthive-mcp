@@ -1,7 +1,8 @@
 """
 agenthive-mcp - a thin MCP (Model Context Protocol) stdio server exposing
-AgentHive's two agent-facing calls, retrieve_context and log_session, as
-native tools for Cursor and Claude Code.
+AgentHive's member-level calls - retrieve_context, log_session,
+create_agent, list_agents, create_task, and list_tasks - as native tools
+for Cursor and Claude Code.
 
 This is deliberately a standalone, self-contained wrapper: it makes its
 own plain HTTP calls to a running AgentHive service rather than importing
@@ -18,6 +19,15 @@ enforced entirely server-side; this process can do exactly what that
 token already lets it do over the API directly, nothing more. See
 AgentHive's ADR.md ("Why not build an LLM-request proxy" and
 "Authentication") for the reasoning this follows.
+
+Only [member]-role calls are exposed - the same tier retrieve_context and
+log_session already sit at (see AgentHive's server.py route table).
+Admin-only calls (list_pending/approve/reject, user management,
+auto-approve rules) are deliberately left out: they exist to let a human
+operate the review gate from the review UI or an admin script, and
+turning them into agent-callable tools would let an agent approve or
+reject its own (or another agent's) pending memory, which defeats the
+point of the gate. See AgentHive's ADR.md for why that gate exists.
 
 Runs over stdio - the standard transport for a per-user local MCP server
 that an IDE spawns as a subprocess. Reads its target service/team/token
@@ -113,6 +123,8 @@ def log_session(
     body: str,
     tags: list[str] | None = None,
     links: list[str] | None = None,
+    agent_id: str | None = None,
+    task_id: str | None = None,
 ) -> dict:
     """Log what happened this session as a memory node for the team to
     reuse. Call this once at the end of a session that learned something
@@ -122,12 +134,63 @@ def log_session(
     deliberate review gate, not a bug. `title` is a short, searchable
     summary (this is what future retrieve_context anchors match against);
     `body` is the actual content; `tags` and `links` are optional and
-    help retrieval and review."""
+    help retrieval and review. `agent_id`/`task_id` are optional ids from
+    create_agent/create_task - attaching them lets an admin auto-approve
+    by agent (see create_auto_approve_rule, admin-only) and lets future
+    retrieval be scoped to a task."""
     _, _, team_id = _config()
     return _request(
         "POST", f"/teams/{team_id}/memory",
-        body={"title": title, "body": body, "tags": tags or [], "links": links or []},
+        body={
+            "title": title, "body": body, "tags": tags or [], "links": links or [],
+            "agent_id": agent_id, "task_id": task_id,
+        },
     )
+
+
+@mcp.tool()
+def create_agent(name: str, description: str = "", system_prompt: str = "") -> dict:
+    """Register an agent identity with the team, so logged sessions can be
+    attributed to it (pass the returned id as log_session's `agent_id`)
+    and so an admin can target it with an auto-approve rule. `name` is
+    how it shows up in the review UI; `description` and `system_prompt`
+    are optional context for reviewers."""
+    _, _, team_id = _config()
+    return _request(
+        "POST", f"/teams/{team_id}/agents",
+        body={"name": name, "description": description, "system_prompt": system_prompt},
+    )
+
+
+@mcp.tool()
+def list_agents() -> dict:
+    """List the agent identities already registered with this team, e.g.
+    to find an existing agent's id instead of creating a duplicate with
+    create_agent."""
+    _, _, team_id = _config()
+    return _request("GET", f"/teams/{team_id}/agents")
+
+
+@mcp.tool()
+def create_task(name: str, description: str = "") -> dict:
+    """Register a task with the team, so logged sessions can be scoped to
+    it (pass the returned id as log_session's `task_id`) - useful when
+    several sessions across one piece of work should be filterable
+    together later. `name` is how it shows up in the review UI;
+    `description` is optional context."""
+    _, _, team_id = _config()
+    return _request(
+        "POST", f"/teams/{team_id}/tasks",
+        body={"name": name, "description": description},
+    )
+
+
+@mcp.tool()
+def list_tasks() -> dict:
+    """List the tasks already registered with this team, e.g. to find an
+    existing task's id instead of creating a duplicate with create_task."""
+    _, _, team_id = _config()
+    return _request("GET", f"/teams/{team_id}/tasks")
 
 
 if __name__ == "__main__":
