@@ -1,9 +1,15 @@
 """
-Drives mcp_server.py as a real subprocess over real MCP stdio, using a
-real mcp.ClientSession - nothing mocked at the protocol layer. The
-AgentHive side is a small local fake (fake_agenthive.py), not the real
-service - see that file's docstring for why, and README.md for how to
-also run against a real one manually.
+Drives agenthive_mcp.server as a real subprocess over real MCP stdio,
+using a real mcp.ClientSession - nothing mocked at the protocol layer.
+The AgentHive side is a small local fake (fake_agenthive.py), not the
+real service - see that file's docstring for why, and README.md for how
+to also run against a real one manually.
+
+This is heavier than the org's usual mocked-client unit-test pattern
+(see snyk-mcp's tests/test_tools.py), deliberately: it already caught a
+real bug once (FastMCP's structuredContent is None for a plain `-> dict`
+return type, so the payload has to be parsed from content[0].text) that
+a mocked-function-call test would never have exercised.
 """
 import json
 import os
@@ -17,6 +23,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from fake_agenthive import FakeAgentHive
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(ROOT, "src")
 TOKEN = "test-token-abc123"
 TEAM_ID = "team-xyz"
 
@@ -38,7 +45,13 @@ def _server_params(base_url: str, token: str = TOKEN, team_id: str = TEAM_ID) ->
         env.pop("AGENTHIVE_TOKEN", None)
     env["AGENTHIVE_URL"] = base_url
     env["AGENTHIVE_TEAM_ID"] = team_id
-    return StdioServerParameters(command=sys.executable, args=["mcp_server.py"], cwd=ROOT, env=env)
+    # PYTHONPATH rather than relying on an editable install already being
+    # in place - keeps this runnable with a bare `pytest` against a fresh
+    # checkout, same as the src/ layout in general.
+    env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
+    return StdioServerParameters(
+        command=sys.executable, args=["-m", "agenthive_mcp.server"], cwd=ROOT, env=env
+    )
 
 
 def _result_json(result):

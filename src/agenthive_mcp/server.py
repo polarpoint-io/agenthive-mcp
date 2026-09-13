@@ -1,8 +1,7 @@
-"""
-agenthive-mcp - a thin MCP (Model Context Protocol) stdio server exposing
+"""agenthive-mcp - a thin MCP (Model Context Protocol) server exposing
 AgentHive's member-level calls - retrieve_context, log_session,
 create_agent, list_agents, create_task, and list_tasks - as native tools
-for Cursor and Claude Code.
+for Cursor, Claude Code, and any other MCP client.
 
 This is deliberately a standalone, self-contained wrapper: it makes its
 own plain HTTP calls to a running AgentHive service rather than importing
@@ -29,73 +28,33 @@ turning them into agent-callable tools would let an agent approve or
 reject its own (or another agent's) pending memory, which defeats the
 point of the gate. See AgentHive's ADR.md for why that gate exists.
 
-Runs over stdio - the standard transport for a per-user local MCP server
-that an IDE spawns as a subprocess. Reads its target service/team/token
-from the environment (AGENTHIVE_URL / AGENTHIVE_TOKEN / AGENTHIVE_TEAM_ID)
-rather than a config file, so it's a three-line env block in whatever MCP
-client config your IDE uses - see README.md.
+Transport selection (env vars), matching the rest of the org's MCP
+servers (see polarpoint-io/snyk-mcp):
+    TRANSPORT=stdio (default)   - MCP stdio transport, spawned by your IDE
+    TRANSPORT=http              - SSE/HTTP transport on HTTP_HOST:HTTP_PORT
 """
-import json
+
+from __future__ import annotations
+
+import logging
 import os
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 
-try:
-    from mcp.server.fastmcp import FastMCP
-except ImportError:
-    print(
-        "agenthive-mcp needs the `mcp` package: pip install -r requirements.txt",
-        file=sys.stderr,
-    )
-    raise
+from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("agenthive")
+from .client import get_config as _get_config
+from .client import request as _request
 
+logger = logging.getLogger("agenthive_mcp")
 
-class AgentHiveError(RuntimeError):
-    """Raised on any non-2xx response from the AgentHive API, with the
-    server's own error message rather than a generic HTTP status."""
-
-
-def _config() -> tuple[str, str, str]:
-    missing = [
-        name for name in ("AGENTHIVE_URL", "AGENTHIVE_TOKEN", "AGENTHIVE_TEAM_ID")
-        if not os.environ.get(name)
-    ]
-    if missing:
-        raise RuntimeError(
-            "agenthive-mcp is missing " + ", ".join(missing) + " - set these in "
-            "the MCP client config's env block (see README.md)."
-        )
-    return (
-        os.environ["AGENTHIVE_URL"].rstrip("/"),
-        os.environ["AGENTHIVE_TOKEN"],
-        os.environ["AGENTHIVE_TEAM_ID"],
-    )
-
-
-def _request(method: str, path: str, body: dict | None = None, query: dict | None = None) -> dict:
-    base_url, token, _ = _config()
-    url = base_url + path
-    if query:
-        url += "?" + urllib.parse.urlencode(query)
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("X-API-Key", token)
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        try:
-            detail = json.loads(e.read()).get("error", "unknown error")
-        except (json.JSONDecodeError, AttributeError):
-            detail = e.reason
-        raise AgentHiveError(f"{e.code}: {detail}") from None
-    except urllib.error.URLError as e:
-        raise AgentHiveError(f"could not reach {base_url}: {e.reason}") from None
+mcp = FastMCP(
+    name="agenthive",
+    instructions=(
+        "Shared, reviewed memory for a team of coding agents. Call "
+        "retrieve_context before starting work and log_session once you're "
+        "done. Requires AGENTHIVE_URL/AGENTHIVE_TOKEN/AGENTHIVE_TEAM_ID env "
+        "vars set to your own personal AgentHive token."
+    ),
+)
 
 
 @mcp.tool()
@@ -110,7 +69,7 @@ def retrieve_context(anchor: str, hops: int = 2, hub_cutoff: int = 15) -> dict:
     doesn't pull in the whole graph. Returns a `neighborhood` list of
     memory nodes plus `approx_tokens`, what folding them into context
     would actually cost."""
-    _, _, team_id = _config()
+    _, _, team_id = _get_config()
     return _request(
         "GET", f"/teams/{team_id}/memory/retrieve",
         query={"anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff},
@@ -138,7 +97,7 @@ def log_session(
     create_agent/create_task - attaching them lets an admin auto-approve
     by agent (see create_auto_approve_rule, admin-only) and lets future
     retrieval be scoped to a task."""
-    _, _, team_id = _config()
+    _, _, team_id = _get_config()
     return _request(
         "POST", f"/teams/{team_id}/memory",
         body={
@@ -155,7 +114,7 @@ def create_agent(name: str, description: str = "", system_prompt: str = "") -> d
     and so an admin can target it with an auto-approve rule. `name` is
     how it shows up in the review UI; `description` and `system_prompt`
     are optional context for reviewers."""
-    _, _, team_id = _config()
+    _, _, team_id = _get_config()
     return _request(
         "POST", f"/teams/{team_id}/agents",
         body={"name": name, "description": description, "system_prompt": system_prompt},
@@ -167,7 +126,7 @@ def list_agents() -> dict:
     """List the agent identities already registered with this team, e.g.
     to find an existing agent's id instead of creating a duplicate with
     create_agent."""
-    _, _, team_id = _config()
+    _, _, team_id = _get_config()
     return _request("GET", f"/teams/{team_id}/agents")
 
 
@@ -178,7 +137,7 @@ def create_task(name: str, description: str = "") -> dict:
     several sessions across one piece of work should be filterable
     together later. `name` is how it shows up in the review UI;
     `description` is optional context."""
-    _, _, team_id = _config()
+    _, _, team_id = _get_config()
     return _request(
         "POST", f"/teams/{team_id}/tasks",
         body={"name": name, "description": description},
@@ -189,9 +148,36 @@ def create_task(name: str, description: str = "") -> dict:
 def list_tasks() -> dict:
     """List the tasks already registered with this team, e.g. to find an
     existing task's id instead of creating a duplicate with create_task."""
-    _, _, team_id = _config()
+    _, _, team_id = _get_config()
     return _request("GET", f"/teams/{team_id}/tasks")
 
 
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    """Console entrypoint. Selects transport based on TRANSPORT env var,
+    same convention as the rest of the org's MCP servers."""
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    transport = os.environ.get("TRANSPORT", "stdio").lower()
+    if transport == "stdio":
+        logger.info("Starting agenthive-mcp on stdio transport")
+        mcp.run(transport="stdio")
+    elif transport in ("http", "sse"):
+        host = os.environ.get("HTTP_HOST", "0.0.0.0")
+        port = int(os.environ.get("HTTP_PORT", "8000"))
+        mcp.settings.host = host
+        mcp.settings.port = port
+        logger.info("Starting agenthive-mcp on SSE transport at %s:%d", host, port)
+        mcp.run(transport="sse")
+    else:
+        raise SystemExit(f"Unknown TRANSPORT={transport!r}. Use 'stdio' or 'http'.")
+
+
 if __name__ == "__main__":
-    mcp.run()
+    main()

@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  agenthive-mcp:
+    build: .
+    image: agenthive-mcp:latest
+    environment:
+      - AGENTHIVE_URL=${AGENTHIVE_URL}
+      - AGENTHIVE_TOKEN=${AGENTHIVE_TOKEN}
+      - AGENTHIVE_TEAM_ID=${AGENTHIVE_TEAM_ID}
+      - TRANSPORT=http
+      - HTTP_HOST=0.0.0.0
+      - HTTP_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
