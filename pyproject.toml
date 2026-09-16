@@ -21,7 +21,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "mcp>=1.2.0",
+    # mcp 2.x renamed mcp.server.fastmcp.FastMCP to MCPServer and changed
+    # other APIs (see https://py.sdk.modelcontextprotocol.io/v2/migration/).
+    # Pin below 2.0 until this server is migrated; unpinned, CI silently
+    # picked up 2.x and every test failed with ModuleNotFoundError.
+    "mcp>=1.2.0,<2",
 ]
 
 [project.optional-dependencies]

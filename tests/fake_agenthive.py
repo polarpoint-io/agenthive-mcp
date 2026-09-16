@@ -16,7 +16,7 @@ only so this repo's tests don't need that other repo checked out.
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 
 class FakeAgentHive:
@@ -121,7 +121,7 @@ class FakeAgentHive:
                     self._send_json(200, {
                         "neighborhood": matched,
                         "neighborhood_count": len(matched),
-                        "approx_tokens": sum(len((n["body"] or "")) // 4 for n in matched),
+                        "approx_tokens": sum(len(n["body"] or "") // 4 for n in matched),
                     })
                     return
 
