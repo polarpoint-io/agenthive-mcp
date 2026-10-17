@@ -12,7 +12,7 @@ System_Boundary(harness, "Agent Harness (Claude Code, Cursor, Claude Desktop, ..
 }
 
 System_Boundary(pkg, "agenthive-mcp (one pip package, two entry points)") {
-  Container(mcp, "MCP Server", "Python, FastMCP over stdio or HTTP/SSE", "Exposes member-role calls as native tools: retrieve_context, retrieve_index, fetch_nodes, log_session, and the agent/task helpers. Admin calls are deliberately absent")
+  Container(mcp, "MCP Server", "Python, FastMCP over stdio or HTTP/SSE", "Exposes member-role calls as native tools: retrieve_context, retrieve_index, fetch_nodes, report_gaps, log_session, and the agent/task helpers. Admin calls are deliberately absent - including the link, tier and rule proposals, which change how the gate behaves")
   Container(hook, "agenthive-log", "Python console script", "The session-end backstop. Writes a short node only when the model did not log one itself, so a crashed or truncated session is visible rather than silently missing")
   ContainerDb(state, "Local State", "Files under XDG_STATE_HOME", "A scoped marker saying a real write already happened, and an atomic claim that stops duplicate hook firings double-posting")
 }

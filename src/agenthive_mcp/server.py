@@ -1,7 +1,7 @@
 """agenthive-mcp - a thin MCP (Model Context Protocol) server exposing
 AgentHive's member-level calls - retrieve_context, retrieve_index,
-fetch_nodes, log_session, create_agent, list_agents, create_task, and
-list_tasks - as native tools
+fetch_nodes, report_gaps, log_session, create_agent, list_agents,
+create_task, and list_tasks - as native tools
 for Cursor, Claude Code, and any other MCP client.
 
 This is deliberately a standalone, self-contained wrapper: it makes its
@@ -23,7 +23,8 @@ AgentHive's ADR.md ("Why not build an LLM-request proxy" and
 Only [member]-role calls are exposed - the same tier retrieve_context and
 log_session already sit at (see AgentHive's server.py route table).
 Admin-only calls (list_pending/approve/reject, user management,
-auto-approve rules) are deliberately left out: they exist to let a human
+auto-approve rules, and the link/tier/rule suggestions the
+memory-processing layer produces) are deliberately left out: they exist to let a human
 operate the review gate from the review UI or an admin script, and
 turning them into agent-callable tools would let an agent approve or
 reject its own (or another agent's) pending memory, which defeats the
@@ -121,6 +122,26 @@ def fetch_nodes(ids: list[str]) -> dict:
     not a failure to retry."""
     _, _, team_id = _get_config()
     return _request("POST", f"/teams/{team_id}/memory/fetch", body={"ids": ids})
+
+
+@mcp.tool()
+def report_gaps(min_count: int = 2) -> dict:
+    """What this team keeps searching for and never finds.
+
+    Worth calling at the START of a session, next to retrieve_context.
+    If the thing you are about to work on appears here, the team has
+    looked for it repeatedly and come back empty every time - which
+    makes your log_session at the end of this session the fix for a
+    standing gap rather than one more note.
+
+    Each entry carries a miss count. `awaiting_review: true` means
+    something already written WOULD have answered it and is sitting
+    unapproved, so the fix there is a human clearing the review queue,
+    not you writing it again - don't duplicate it.
+
+    Read-only. This proposes nothing and changes nothing."""
+    _, _, team_id = _get_config()
+    return _request("GET", f"/teams/{team_id}/gaps", query={"min_count": min_count})
 
 
 @mcp.tool()
