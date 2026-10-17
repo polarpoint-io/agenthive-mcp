@@ -155,7 +155,7 @@ def log_session(
     # Leave a local breadcrumb so the agenthive-log hook knows the model
     # already did this properly and stays quiet instead of writing a
     # content-free backstop node on top of it. See hooklog.py.
-    _mark_logged()
+    _mark_logged(cwd=os.getcwd())
     return result
 
 

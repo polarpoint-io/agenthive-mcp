@@ -289,8 +289,10 @@ tool**. MCP tools are invoked by the model inside its loop; hooks are
 shell commands the harness spawns outside it. The two paths don't
 connect. So this package ships a second console script, `agenthive-log`,
 which talks to the AgentHive API directly using the same
-`AGENTHIVE_URL` / `AGENTHIVE_TOKEN` / `AGENTHIVE_TEAM_ID` you already set
-for the MCP server. Nothing extra to install or configure.
+`AGENTHIVE_URL` / `AGENTHIVE_TOKEN` / `AGENTHIVE_TEAM_ID` variables the
+MCP server reads.
+
+![Container diagram](docs/diagrams/c4-container.svg)
 
 It is a **backstop, not a replacement**. A hook receives metadata, not
 understanding - it knows a session ended, not what was learned. Writing
@@ -305,6 +307,57 @@ attention. So:
   summarised.
 
 The gap becomes visible. It does not get filled with noise.
+
+### Giving the hook its credentials
+
+**The hook does not inherit the MCP server's environment.** If your
+`AGENTHIVE_*` variables live in an `env` block in `claude_desktop_config.json`
+or `~/.cursor/mcp.json`, those configure that subprocess only - the
+harness spawns the hook separately and it will start up unconfigured,
+log `not configured, skipping` to stderr, and write nothing. Silently,
+as far as the review queue is concerned.
+
+Pick one of these:
+
+**Shell profile** (simplest when the harness is launched from a shell):
+
+```bash
+# ~/.zshrc or ~/.bashrc
+export AGENTHIVE_URL=https://your-agenthive-host
+export AGENTHIVE_TEAM_ID=your_team_id
+export AGENTHIVE_TOKEN=your_personal_token
+```
+
+Note that a GUI-launched app may not see these. On macOS, `launchctl
+setenv` or a `~/Library/LaunchAgents` entry covers that case.
+
+**Inline on the hook command** (explicit, no profile dependency - but it
+puts the token in a config file, so check the file's permissions and keep
+it out of version control):
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [{
+      "command": "env AGENTHIVE_URL=https://your-agenthive-host AGENTHIVE_TEAM_ID=your_team_id AGENTHIVE_TOKEN=your_personal_token agenthive-log"
+    }]
+  }
+}
+```
+
+**A wrapper script** (best of both - the token stays in one
+`chmod 600` file, and the hook command stays clean):
+
+```bash
+#!/usr/bin/env bash
+# ~/.local/bin/agenthive-log-hook   (chmod +x)
+set -a; . "$HOME/.config/agenthive/env"; set +a
+exec agenthive-log
+```
+
+Verify it either way with the smoke test below - it uses the same code
+path and the same environment the hook will get.
 
 ### Claude Code
 
@@ -343,11 +396,33 @@ The gap becomes visible. It does not get filled with noise.
 
 | Property | Behaviour |
 |---|---|
-| Exit code | Always `0`. A memory system must never be able to break the harness. Problems go to stderr. |
-| Missing config | Logs and skips. Not an error. |
-| Unreachable API | Logs and skips. |
-| Duplicate firing | Deduplicated on content hash, 15-minute window. |
+| Exit code | Always `0`, for every failure mode - unreachable API, missing config, unusable state directory, malformed stdin, unexpected field types in the payload. A memory system must never be able to break the harness. Problems go to stderr. |
+| Missing config | Logs and skips. Not an error, and it does not suppress a later configured run. |
+| Failed write | Logs and skips. The send claim is released, so the next firing retries rather than inheriting a marker for a write that never happened. |
+| Duplicate firing | An atomic `O_EXCL` claim, promoted to a delivery record only after a successful write. Two hooks firing at once cannot both post. |
+| Suppression scope | Keyed on (API host, team, git top level). A write for one team or repo never silences another's backstop. |
 | Transcript content | **Excluded by default.** |
+
+Two residual limitations worth knowing, both deliberate:
+
+- Suppression cannot be keyed on a harness session id, because the MCP
+  server has no access to one - it is spawned over stdio and the
+  protocol carries no session identifier. Two concurrent sessions in the
+  same repo against the same team therefore share a key, so a write in
+  either suppresses the other's backstop.
+- If the MCP server's working directory differs from the hook payload's
+  `cwd`, the two keys differ and you get one spare backstop node. That
+  is a reviewable nuisance rather than a loss.
+
+### Smoke test
+
+```bash
+echo '{"hook_event_name":"SessionEnd","session_id":"smoke-test","cwd":"'"$PWD"'"}' \
+  | agenthive-log
+```
+
+It prints the node id to stderr and exits 0. The node lands in the
+review queue tagged `unsummarised`, where you can reject it.
 
 That last one is deliberate. A transcript contains whatever was pasted
 into it, and none of it is wrapped in `<private>` for us - pasting an

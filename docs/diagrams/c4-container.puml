@@ -1,0 +1,30 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+title agenthive-mcp - Container Diagram
+
+Person(engineer, "Engineer", "Runs a coding-agent session in their harness")
+
+System_Boundary(harness, "Agent Harness (Claude Code, Cursor, Claude Desktop, ...)") {
+  Container(model, "Agent Loop", "The model and its tool calls", "Decides what to do, including whether to call a tool. Everything it reaches goes through the tool list")
+  Container(lifecycle, "Lifecycle Hooks", "Shell commands spawned by the harness", "Run OUTSIDE the agent loop on events like session end. Cannot call an MCP tool, so they need their own route to the API")
+}
+
+System_Boundary(pkg, "agenthive-mcp (one pip package, two entry points)") {
+  Container(mcp, "MCP Server", "Python, FastMCP over stdio or HTTP/SSE", "Exposes member-role calls as native tools: retrieve_context, retrieve_index, fetch_nodes, log_session, and the agent/task helpers. Admin calls are deliberately absent")
+  Container(hook, "agenthive-log", "Python console script", "The session-end backstop. Writes a short node only when the model did not log one itself, so a crashed or truncated session is visible rather than silently missing")
+  ContainerDb(state, "Local State", "Files under XDG_STATE_HOME", "A scoped marker saying a real write already happened, and an atomic claim that stops duplicate hook firings double-posting")
+}
+
+System_Ext(agenthive, "AgentHive", "The shared, reviewed memory graph. Holds the approval gate, team isolation and the role split - this package decides nothing of its own")
+
+Rel(engineer, model, "Works with")
+Rel(model, mcp, "Calls tools", "MCP")
+Rel(lifecycle, hook, "Spawns with event JSON on stdin")
+Rel(mcp, agenthive, "Pass-through using the caller's own token", "HTTPS/JSON, X-API-Key")
+Rel(hook, agenthive, "Same API, same token, separate process", "HTTPS/JSON, X-API-Key")
+Rel(mcp, state, "Marks a successful log_session")
+Rel(hook, state, "Reads the marker, then claims the send")
+
+@enduml

@@ -158,7 +158,10 @@ def test_log_session_leaves_the_breadcrumb_the_hook_reads(fake_server, tmp_path)
                     {"title": "Real summary", "body": "written by the model"},
                     extra_env={"AGENTHIVE_HOOK_STATE_DIR": str(state)})
     assert written["status"] == "pending"
-    assert (state / "last-log-session").exists()
+    # Scoped by (base url, team, project) rather than a single global file,
+    # so a write for one team cannot silence another's backstop.
+    markers = list(state.glob("logged-*"))
+    assert len(markers) == 1, f"expected one scoped marker, got {markers}"
 
 
 # ---------------------------------------------------------------------------
@@ -211,18 +214,24 @@ def test_hook_stays_quiet_when_log_session_already_ran(fake_server, tmp_path):
     state = tmp_path / "state"
     sys.path.insert(0, SRC)
     os.environ["AGENTHIVE_HOOK_STATE_DIR"] = str(state)
+    # The marker is scoped, so the tool and the hook have to agree on the
+    # destination AND the project for suppression to apply at all.
+    os.environ.update(AGENTHIVE_URL=fake_server.base_url, AGENTHIVE_TOKEN=TOKEN,
+                      AGENTHIVE_TEAM_ID=TEAM_ID)
     try:
         from agenthive_mcp.hooklog import mark_logged
-        mark_logged("abc123")
+        mark_logged("abc123", cwd=str(tmp_path))
     finally:
-        os.environ.pop("AGENTHIVE_HOOK_STATE_DIR", None)
+        for key in ("AGENTHIVE_HOOK_STATE_DIR", "AGENTHIVE_URL",
+                    "AGENTHIVE_TOKEN", "AGENTHIVE_TEAM_ID"):
+            os.environ.pop(key, None)
 
     before = len(fake_server.nodes)
     result = _run_hook({"hook_event_name": "SessionEnd", "cwd": str(tmp_path)},
                        _hook_env(fake_server, state))
     assert result.returncode == 0
     assert len(fake_server.nodes) == before
-    assert "already recorded" in result.stderr
+    assert "already recorded for this project" in result.stderr
 
 
 def test_hook_is_idempotent_across_duplicate_firings(fake_server, tmp_path):
@@ -278,3 +287,123 @@ def test_transcript_is_excluded_unless_opted_in(fake_server, tmp_path):
                         "AGENTHIVE_HOOK_INCLUDE_TRANSCRIPT": "true"})
     bodies = " ".join(n["body"] or "" for n in fake_server.nodes.values())
     assert "hunter2" in bodies
+
+
+# ---------------------------------------------------------------------------
+# Regressions from PR #1 review
+# ---------------------------------------------------------------------------
+
+def test_hook_survives_an_unusable_state_directory(fake_server, tmp_path):
+    """A regular file sitting where the state dir should be made
+    state_dir() raise FileExistsError outside the old catch-all, so the
+    hook exited 1 with a traceback - against its own documented
+    guarantee. The catch-all now wraps the whole workflow, not just the
+    HTTP call."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+
+    result = _run_hook({"hook_event_name": "stop", "cwd": str(tmp_path)}, {
+        **_hook_env(fake_server, tmp_path / "unused"),
+        "AGENTHIVE_HOOK_STATE_DIR": str(blocker),
+    })
+    assert result.returncode == 0
+    assert "state directory unusable" in result.stderr
+
+
+def test_hook_survives_wrongly_typed_payload_fields(fake_server, tmp_path):
+    """Payloads come from a harness we don't control. A numeric cwd used
+    to reach cwd.rstrip() and raise AttributeError."""
+    result = _run_hook({
+        "cwd": 123,
+        "hook_event_name": ["not", "a", "string"],
+        "transcript_path": {"nope": 1},
+        "session_id": 456,
+    }, _hook_env(fake_server, tmp_path / "state"))
+    assert result.returncode == 0
+    assert len(_backstop(fake_server)) == 1
+
+
+def test_a_failed_send_does_not_suppress_the_retry(tmp_path):
+    """The marker used to be written BEFORE the POST, so a failed write
+    silenced identical firings for 15 minutes with nothing recorded. The
+    claim is now released on failure."""
+    env = {
+        "AGENTHIVE_URL": "http://127.0.0.1:9",
+        "AGENTHIVE_TOKEN": "t", "AGENTHIVE_TEAM_ID": "team",
+        "AGENTHIVE_HOOK_STATE_DIR": str(tmp_path / "state"),
+    }
+    payload = {"hook_event_name": "stop", "cwd": str(tmp_path)}
+
+    first = _run_hook(payload, env)
+    second = _run_hook(payload, env)
+
+    assert first.returncode == second.returncode == 0
+    # Both must have actually attempted the write, not skipped.
+    assert "could not write" in first.stderr
+    assert "could not write" in second.stderr
+    assert "already sent" not in second.stderr
+
+
+def test_unconfigured_run_does_not_suppress_a_later_configured_one(fake_server, tmp_path):
+    """Same bug, the other common shape: the hook fires before the
+    credentials are in place, then fires again once they are."""
+    state = tmp_path / "state"
+    payload = {"hook_event_name": "stop", "cwd": str(tmp_path)}
+
+    unconfigured = _run_hook(payload, {"AGENTHIVE_HOOK_STATE_DIR": str(state)})
+    assert "not configured" in unconfigured.stderr
+
+    configured = _run_hook(payload, _hook_env(fake_server, state))
+    assert configured.returncode == 0
+    assert len(_backstop(fake_server)) == 1
+
+
+def test_a_write_for_one_team_does_not_silence_another(tmp_path):
+    """mark_logged() was a single user-wide timestamp, so a successful
+    log_session in any project silenced the backstop everywhere for an
+    hour - other repos and other teams included."""
+    sys.path.insert(0, SRC)
+    state = str(tmp_path / "state")
+    os.environ["AGENTHIVE_HOOK_STATE_DIR"] = state
+    os.environ.update(AGENTHIVE_URL="http://host-a", AGENTHIVE_TOKEN="t",
+                      AGENTHIVE_TEAM_ID="team-A")
+    try:
+        from agenthive_mcp import hooklog
+        hooklog.mark_logged(cwd=str(tmp_path))
+        assert hooklog.logged_recently(cwd=str(tmp_path)) is True
+
+        os.environ["AGENTHIVE_TEAM_ID"] = "team-B"
+        assert hooklog.logged_recently(cwd=str(tmp_path)) is False
+
+        os.environ["AGENTHIVE_TEAM_ID"] = "team-A"
+        os.environ["AGENTHIVE_URL"] = "http://host-b"
+        assert hooklog.logged_recently(cwd=str(tmp_path)) is False
+    finally:
+        for key in ("AGENTHIVE_HOOK_STATE_DIR", "AGENTHIVE_URL",
+                    "AGENTHIVE_TOKEN", "AGENTHIVE_TEAM_ID"):
+            os.environ.pop(key, None)
+
+
+def test_an_inflight_claim_blocks_a_concurrent_second_send(fake_server, tmp_path):
+    """Two hooks firing at once must not both POST. The claim is an
+    O_EXCL create, so only one wins; the loser sees an in-flight claim
+    and stays quiet."""
+    sys.path.insert(0, SRC)
+    state = str(tmp_path / "state")
+    os.environ["AGENTHIVE_HOOK_STATE_DIR"] = state
+    os.environ.update(AGENTHIVE_URL=fake_server.base_url, AGENTHIVE_TOKEN=TOKEN,
+                      AGENTHIVE_TEAM_ID=TEAM_ID)
+    try:
+        from agenthive_mcp import hooklog
+        first = hooklog.claim_send("deadbeef" * 8)
+        assert first is not None
+        second = hooklog.claim_send("deadbeef" * 8)
+        assert second is None, "a concurrent claim must not also win"
+
+        # Released on failure, so the next attempt can take it.
+        hooklog.release_send(first)
+        assert hooklog.claim_send("deadbeef" * 8) is not None
+    finally:
+        for key in ("AGENTHIVE_HOOK_STATE_DIR", "AGENTHIVE_URL",
+                    "AGENTHIVE_TOKEN", "AGENTHIVE_TEAM_ID"):
+            os.environ.pop(key, None)
