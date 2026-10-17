@@ -1,3 +1,11 @@
+# [1.2.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.1.0...v1.2.0) (2026-10-17)
+
+
+### Features
+
+* **tools:** expose report_gaps, and keep the other proposals out ([9b99b77](https://github.com/polarpoint-io/agenthive-mcp/commit/9b99b77de50f12c2af0c9cbade21a7cd1586b1aa))
+* **tools:** expose report_gaps, and keep the other proposals out ([1f4a047](https://github.com/polarpoint-io/agenthive-mcp/commit/1f4a0475334ecd56ee8c495b641f86eb5fb36132))
+
 # [1.1.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.0.0...v1.1.0) (2026-10-17)
 
 
