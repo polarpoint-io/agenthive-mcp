@@ -1,6 +1,7 @@
 """agenthive-mcp - a thin MCP (Model Context Protocol) server exposing
-AgentHive's member-level calls - retrieve_context, log_session,
-create_agent, list_agents, create_task, and list_tasks - as native tools
+AgentHive's member-level calls - retrieve_context, retrieve_index,
+fetch_nodes, log_session, create_agent, list_agents, create_task, and
+list_tasks - as native tools
 for Cursor, Claude Code, and any other MCP client.
 
 This is deliberately a standalone, self-contained wrapper: it makes its
@@ -43,6 +44,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .client import get_config as _get_config
 from .client import request as _request
+from .hooklog import mark_logged as _mark_logged
 
 logger = logging.getLogger("agenthive_mcp")
 
@@ -51,7 +53,8 @@ mcp = FastMCP(
     instructions=(
         "Shared, reviewed memory for a team of coding agents. Call "
         "retrieve_context before starting work and log_session once you're "
-        "done. Requires AGENTHIVE_URL/AGENTHIVE_TOKEN/AGENTHIVE_TEAM_ID env "
+        "done - or retrieve_index then fetch_nodes when the topic is broad "
+        "and you only need part of what comes back. Requires AGENTHIVE_URL/AGENTHIVE_TOKEN/AGENTHIVE_TEAM_ID env "
         "vars set to your own personal AgentHive token."
     ),
 )
@@ -77,6 +80,50 @@ def retrieve_context(anchor: str, hops: int = 2, hub_cutoff: int = 15) -> dict:
 
 
 @mcp.tool()
+def retrieve_index(
+    anchor: str,
+    hops: int = 2,
+    hub_cutoff: int = 15,
+    tags: list[str] | None = None,
+) -> dict:
+    """Preview what retrieve_context WOULD return, without paying for the
+    bodies. Same traversal, same nodes, but each entry is just id, title,
+    tier, tags and `approx_tokens` - what reading that one node would
+    cost. Follow up with fetch_nodes(ids) for the ones worth reading.
+
+    Prefer this over retrieve_context when the topic is broad, when you
+    only need one specific thing from a wide neighborhood, or when
+    retrieve_context's `approx_tokens` came back larger than you want to
+    spend. Prefer retrieve_context when the neighborhood is small or you
+    intend to read most of it - two round trips to save a few hundred
+    tokens is a worse deal than one round trip.
+
+    `tags` optionally narrows to nodes carrying any of them; the reserved
+    ones are "decision", "bugfix", "security_alert" and "sensitive"."""
+    _, _, team_id = _get_config()
+    query: dict = {
+        "anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff, "mode": "index",
+    }
+    if tags:
+        query["tags"] = ",".join(tags)
+    return _request("GET", f"/teams/{team_id}/memory/retrieve", query=query)
+
+
+@mcp.tool()
+def fetch_nodes(ids: list[str]) -> dict:
+    """Fetch the full bodies of specific memory nodes by id, after
+    retrieve_index showed you which ones are worth reading. Pass every id
+    you want in ONE call rather than one call per id.
+
+    Ids you are not entitled to - a node still pending review, one that
+    was rejected, or one belonging to another team - come back in
+    `missing` rather than as an error. That is the review gate working,
+    not a failure to retry."""
+    _, _, team_id = _get_config()
+    return _request("POST", f"/teams/{team_id}/memory/fetch", body={"ids": ids})
+
+
+@mcp.tool()
 def log_session(
     title: str,
     body: str,
@@ -98,13 +145,18 @@ def log_session(
     by agent (see create_auto_approve_rule, admin-only) and lets future
     retrieval be scoped to a task."""
     _, _, team_id = _get_config()
-    return _request(
+    result = _request(
         "POST", f"/teams/{team_id}/memory",
         body={
             "title": title, "body": body, "tags": tags or [], "links": links or [],
             "agent_id": agent_id, "task_id": task_id,
         },
     )
+    # Leave a local breadcrumb so the agenthive-log hook knows the model
+    # already did this properly and stays quiet instead of writing a
+    # content-free backstop node on top of it. See hooklog.py.
+    _mark_logged(cwd=os.getcwd())
+    return result
 
 
 @mcp.tool()

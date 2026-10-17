@@ -70,6 +70,31 @@ class FakeAgentHive:
                     self._send_json(200, dict(server.nodes[node_id]))
                     return
 
+                if parsed.path == f"/teams/{server.team_id}/memory/fetch":
+                    ids = body.get("ids") or []
+                    if not isinstance(ids, list) or not ids:
+                        self._send_json(400, {"error": "ids must be a non-empty list"})
+                        return
+                    unique = list(dict.fromkeys(str(i) for i in ids))
+                    found, missing = [], []
+                    for node_id in unique:
+                        node = server.nodes.get(node_id)
+                        # Approved-only, exactly like the real route - a pending
+                        # id is indistinguishable from an unknown one.
+                        if node and node["status"] == "approved":
+                            found.append(node)
+                        else:
+                            missing.append(node_id)
+                    self._send_json(200, {
+                        "mode": "fetch",
+                        "requested_count": len(unique),
+                        "node_count": len(found),
+                        "nodes": found,
+                        "missing": missing,
+                        "approx_tokens": sum(len(n["body"] or "") // 4 for n in found),
+                    })
+                    return
+
                 if parsed.path.startswith(f"/teams/{server.team_id}/memory/") and parsed.path.endswith("/approve"):
                     node_id = parsed.path.split("/")[-2]
                     if node_id not in server.nodes:
@@ -118,10 +143,28 @@ class FakeAgentHive:
                         n for n in server.nodes.values()
                         if n["status"] == "approved" and anchor.lower() in (n["title"] or "").lower()
                     ]
+                    full_tokens = sum(len(n["body"] or "") // 4 for n in matched)
+                    if q.get("mode", ["full"])[0] == "index":
+                        self._send_json(200, {
+                            "mode": "index",
+                            "neighborhood": [
+                                {
+                                    "id": n["id"], "title": n["title"],
+                                    "tier": n.get("tier", "L1"),
+                                    "tags": n.get("tags") or [],
+                                    "approx_tokens": len(n["body"] or "") // 4,
+                                }
+                                for n in matched
+                            ],
+                            "neighborhood_count": len(matched),
+                            "approx_tokens": sum(len(n["title"] or "") for n in matched) // 4,
+                            "approx_tokens_full_neighborhood": full_tokens,
+                        })
+                        return
                     self._send_json(200, {
                         "neighborhood": matched,
                         "neighborhood_count": len(matched),
-                        "approx_tokens": sum(len(n["body"] or "") // 4 for n in matched),
+                        "approx_tokens": full_tokens,
                     })
                     return
 

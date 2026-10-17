@@ -250,6 +250,8 @@ Every tool here is a **member**-role AgentHive call - the same tier your persona
 | Tool | Description |
 |---|---|
 | `retrieve_context` | Bounded neighborhood of this team's reviewed, approved memory around a topic (`anchor`, `hops=2`, `hub_cutoff=15`) |
+| `retrieve_index` | Same traversal as `retrieve_context` with the bodies withheld - ids, titles, tiers, tags and a per-node token cost, so a session can choose what to read before paying for it (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`) |
+| `fetch_nodes` | Full bodies for specific ids from `retrieve_index` (`ids`). Ids you are not entitled to come back in `missing`, not as an error |
 | `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending` |
 | `create_agent` | Register an agent identity (`name`, `description`, `system_prompt`) so sessions can be attributed to it |
 | `list_agents` | List agent identities already registered with the team |
@@ -274,6 +276,166 @@ and learned.
 Team-specific conventions (which tags to use, the team's `AGENTHIVE_TEAM_ID`) belong in Zone 2 instead - guarded, but team-owned, meant to extend Zone 1 rather than override it. Don't put either in Zone 1: that's platform-locked, and making AgentHive retrieval mandatory org-wide is a bigger call than one repo should make on its own - it would need a PR to `ai-capabilities` and platform-team review.
 
 Repos without that template yet can use a plain `CLAUDE.md` / `.cursor/rules` line instead - same content, just a different file.
+
+
+## Capturing sessions the agent forgot to log (`agenthive-log`)
+
+`log_session` only runs when the model decides to call it. Sessions that
+crash, hit the context limit, or end because someone closed the terminal
+never reach it, and those are exactly the sessions worth a note.
+
+A lifecycle hook fires regardless - but **a hook cannot call an MCP
+tool**. MCP tools are invoked by the model inside its loop; hooks are
+shell commands the harness spawns outside it. The two paths don't
+connect. So this package ships a second console script, `agenthive-log`,
+which talks to the AgentHive API directly using the same
+`AGENTHIVE_URL` / `AGENTHIVE_TOKEN` / `AGENTHIVE_TEAM_ID` variables the
+MCP server reads.
+
+![Container diagram](docs/diagrams/c4-container.svg)
+
+It is a **backstop, not a replacement**. A hook receives metadata, not
+understanding - it knows a session ended, not what was learned. Writing
+a confident-looking node from that would fill the review queue with
+filler and devalue the one thing in AgentHive that needs a human's
+attention. So:
+
+- if `log_session` already succeeded in this session, the hook writes
+  **nothing**;
+- if it didn't, the hook writes one short node tagged `unsummarised` and
+  `hook-captured`, recording that a session happened and was never
+  summarised.
+
+The gap becomes visible. It does not get filled with noise.
+
+### Giving the hook its credentials
+
+**The hook does not inherit the MCP server's environment.** If your
+`AGENTHIVE_*` variables live in an `env` block in `claude_desktop_config.json`
+or `~/.cursor/mcp.json`, those configure that subprocess only - the
+harness spawns the hook separately and it will start up unconfigured,
+log `not configured, skipping` to stderr, and write nothing. Silently,
+as far as the review queue is concerned.
+
+Pick one of these:
+
+**Shell profile** (simplest when the harness is launched from a shell):
+
+```bash
+# ~/.zshrc or ~/.bashrc
+export AGENTHIVE_URL=https://your-agenthive-host
+export AGENTHIVE_TEAM_ID=your_team_id
+export AGENTHIVE_TOKEN=your_personal_token
+```
+
+Note that a GUI-launched app may not see these. On macOS, `launchctl
+setenv` or a `~/Library/LaunchAgents` entry covers that case.
+
+**Inline on the hook command** (explicit, no profile dependency - but it
+puts the token in a config file, so check the file's permissions and keep
+it out of version control):
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [{
+      "command": "env AGENTHIVE_URL=https://your-agenthive-host AGENTHIVE_TEAM_ID=your_team_id AGENTHIVE_TOKEN=your_personal_token agenthive-log"
+    }]
+  }
+}
+```
+
+**A wrapper script** (best of both - the token stays in one
+`chmod 600` file, and the hook command stays clean):
+
+```bash
+#!/usr/bin/env bash
+# ~/.local/bin/agenthive-log-hook   (chmod +x)
+set -a; . "$HOME/.config/agenthive/env"; set +a
+exec agenthive-log
+```
+
+Verify it either way with the smoke test below - it uses the same code
+path and the same environment the hook will get.
+
+### Claude Code
+
+`~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "agenthive-log" }] }
+    ]
+  }
+}
+```
+
+### Cursor
+
+`~/.cursor/hooks.json` (or `<project>/.cursor/hooks.json`, or
+`/etc/cursor/hooks.json` to set it org-wide):
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [{ "command": "agenthive-log" }]
+  }
+}
+```
+
+> Hooks defined in more than one location **all** run, so a `stop` hook
+> present both globally and in a project fires twice for one session.
+> `agenthive-log` fingerprints its payload and skips a duplicate inside a
+> 15-minute window, so this is safe - but it's why the dedupe exists.
+
+### Safety properties
+
+| Property | Behaviour |
+|---|---|
+| Exit code | Always `0`, for every failure mode - unreachable API, missing config, unusable state directory, malformed stdin, unexpected field types in the payload. A memory system must never be able to break the harness. Problems go to stderr. |
+| Missing config | Logs and skips. Not an error, and it does not suppress a later configured run. |
+| Failed write | Logs and skips. The send claim is released, so the next firing retries rather than inheriting a marker for a write that never happened. |
+| Duplicate firing | An atomic `O_EXCL` claim, promoted to a delivery record only after a successful write. Two hooks firing at once cannot both post. |
+| Suppression scope | Keyed on (API host, team, git top level). A write for one team or repo never silences another's backstop. |
+| Transcript content | **Excluded by default.** |
+
+Two residual limitations worth knowing, both deliberate:
+
+- Suppression cannot be keyed on a harness session id, because the MCP
+  server has no access to one - it is spawned over stdio and the
+  protocol carries no session identifier. Two concurrent sessions in the
+  same repo against the same team therefore share a key, so a write in
+  either suppresses the other's backstop.
+- If the MCP server's working directory differs from the hook payload's
+  `cwd`, the two keys differ and you get one spare backstop node. That
+  is a reviewable nuisance rather than a loss.
+
+### Smoke test
+
+```bash
+echo '{"hook_event_name":"SessionEnd","session_id":"smoke-test","cwd":"'"$PWD"'"}' \
+  | agenthive-log
+```
+
+It prints the node id to stderr and exits 0. The node lands in the
+review queue tagged `unsummarised`, where you can reject it.
+
+That last one is deliberate. A transcript contains whatever was pasted
+into it, and none of it is wrapped in `<private>` for us - pasting an
+excerpt into shared team memory is how a credential ends up there. The
+approval gate would only catch it after it is already stored and
+rendered in an admin's browser. Set
+`AGENTHIVE_HOOK_INCLUDE_TRANSCRIPT=true` if your team has decided that
+trade is right for them.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENTHIVE_HOOK_INCLUDE_TRANSCRIPT` | `false` | Append a transcript tail to the backstop node. See above. |
+| `AGENTHIVE_HOOK_STATE_DIR` | `$XDG_STATE_HOME/agenthive` | Where the dedupe and "already logged" markers live. |
 
 
 ## Why a separate repo from AgentHive
