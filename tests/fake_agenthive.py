@@ -24,6 +24,9 @@ class FakeAgentHive:
         self.token = token
         self.team_id = team_id
         self.nodes = {}
+        # Pre-seeded by tests; the real endpoint derives these from the
+        # retrieval_misses table, which this fake does not model.
+        self.gaps = []
         self.agents = {}
         self.tasks = {}
         self._next_id = 1
@@ -165,6 +168,16 @@ class FakeAgentHive:
                         "neighborhood": matched,
                         "neighborhood_count": len(matched),
                         "approx_tokens": full_tokens,
+                    })
+                    return
+
+                if parsed.path == f"/teams/{server.team_id}/gaps":
+                    q = parse_qs(parsed.query)
+                    min_count = int(q.get("min_count", ["2"])[0])
+                    gaps = [g for g in server.gaps if g["miss_count"] >= min_count]
+                    self._send_json(200, {
+                        "gaps": gaps,
+                        "awaiting_review": sum(1 for g in gaps if g["awaiting_review"]),
                     })
                     return
 

@@ -252,6 +252,7 @@ Every tool here is a **member**-role AgentHive call - the same tier your persona
 | `retrieve_context` | Bounded neighborhood of this team's reviewed, approved memory around a topic (`anchor`, `hops=2`, `hub_cutoff=15`) |
 | `retrieve_index` | Same traversal as `retrieve_context` with the bodies withheld - ids, titles, tiers, tags and a per-node token cost, so a session can choose what to read before paying for it (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`) |
 | `fetch_nodes` | Full bodies for specific ids from `retrieve_index` (`ids`). Ids you are not entitled to come back in `missing`, not as an error |
+| `report_gaps` | What this team keeps searching for and never finds (`min_count`). Call at session start next to retrieval: if your work is on the list, your `log_session` closes a standing gap. Entries flagged `awaiting_review` already have an answer stuck in the queue - don't write it twice |
 | `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending` |
 | `create_agent` | Register an agent identity (`name`, `description`, `system_prompt`) so sessions can be attributed to it |
 | `list_agents` | List agent identities already registered with the team |
@@ -437,6 +438,23 @@ trade is right for them.
 | `AGENTHIVE_HOOK_INCLUDE_TRANSCRIPT` | `false` | Append a transcript tail to the backstop node. See above. |
 | `AGENTHIVE_HOOK_STATE_DIR` | `$XDG_STATE_HOME/agenthive` | Where the dedupe and "already logged" markers live. |
 
+
+## What is deliberately not a tool here
+
+AgentHive's memory-processing layer raises four kinds of proposal from
+how the graph has actually been used: gaps, missing links, tier changes,
+and auto-approve rules its own review history justifies.
+
+Only the first is exposed as a tool. `report_gaps` is read-only and
+changes what an agent writes at the end of a session, which is the whole
+reason it is worth a tool call.
+
+The other three change how the review gate behaves - which memory gets
+linked, which gets prioritised, and which skips human review entirely.
+Those stay with the humans who own the gate, reachable through the
+review UI or an admin script, for the same reason `approve` and `reject`
+are not tools: an agent that could widen its own auto-approve rules has
+been handed the gate it was supposed to be subject to.
 
 ## Why a separate repo from AgentHive
 

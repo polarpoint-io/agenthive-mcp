@@ -407,3 +407,48 @@ def test_an_inflight_claim_blocks_a_concurrent_second_send(fake_server, tmp_path
         for key in ("AGENTHIVE_HOOK_STATE_DIR", "AGENTHIVE_URL",
                     "AGENTHIVE_TOKEN", "AGENTHIVE_TEAM_ID"):
             os.environ.pop(key, None)
+
+
+# ---------------------------------------------------------------------------
+# report_gaps - the member half of the memory-processing layer
+# ---------------------------------------------------------------------------
+
+def test_report_gaps_is_a_tool_but_the_admin_suggestions_are_not(fake_server):
+    """The gap list is read-only and useful to an agent mid-session, so
+    it is a tool. Link, tier and rule suggestions change how the gate
+    behaves, so they stay with the humans who own the gate."""
+    async def run():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write), \
+                ClientSession(read, write) as session:
+            await session.initialize()
+            return {t.name for t in (await session.list_tools()).tools}
+
+    names = anyio.run(run)
+    assert "report_gaps" in names
+    assert not names & {"suggest_links", "suggest_tiers", "suggest_rules", "apply_tiers"}
+
+
+def test_report_gaps_passes_the_threshold_through(fake_server):
+    fake_server.gaps = [
+        {"anchor": "Kafka consumer lag", "miss_count": 7, "last_missed_at": "x",
+         "awaiting_review": False, "pending_id": None, "pending_title": None},
+        {"anchor": "One-off typo", "miss_count": 1, "last_missed_at": "x",
+         "awaiting_review": False, "pending_id": None, "pending_title": None},
+    ]
+    result = _call(fake_server.base_url, "report_gaps", {"min_count": 2})
+    assert [g["anchor"] for g in result["gaps"]] == ["Kafka consumer lag"]
+
+    everything = _call(fake_server.base_url, "report_gaps", {"min_count": 1})
+    assert len(everything["gaps"]) == 2
+
+
+def test_report_gaps_flags_what_is_already_waiting_for_review(fake_server):
+    """An agent must be able to tell "nobody wrote this" from "somebody
+    wrote it and it's stuck in the queue" - only the first is its job."""
+    fake_server.gaps = [
+        {"anchor": "Postgres pool", "miss_count": 4, "last_missed_at": "x",
+         "awaiting_review": True, "pending_id": "p1", "pending_title": "Postgres pool"},
+    ]
+    result = _call(fake_server.base_url, "report_gaps", {})
+    assert result["awaiting_review"] == 1
+    assert result["gaps"][0]["pending_title"] == "Postgres pool"
