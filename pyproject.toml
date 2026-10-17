@@ -41,6 +41,9 @@ AgentHive = "https://github.com/polarpoint-io/agenthive"
 
 [project.scripts]
 agenthive-mcp = "agenthive_mcp.server:main"
+# The lifecycle-hook entry point. Not an MCP tool: hooks are spawned by the
+# harness outside the model's loop and cannot call one. See hooklog.py.
+agenthive-log = "agenthive_mcp.hooklog:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

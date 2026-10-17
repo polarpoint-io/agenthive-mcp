@@ -250,6 +250,8 @@ Every tool here is a **member**-role AgentHive call - the same tier your persona
 | Tool | Description |
 |---|---|
 | `retrieve_context` | Bounded neighborhood of this team's reviewed, approved memory around a topic (`anchor`, `hops=2`, `hub_cutoff=15`) |
+| `retrieve_index` | Same traversal as `retrieve_context` with the bodies withheld - ids, titles, tiers, tags and a per-node token cost, so a session can choose what to read before paying for it (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`) |
+| `fetch_nodes` | Full bodies for specific ids from `retrieve_index` (`ids`). Ids you are not entitled to come back in `missing`, not as an error |
 | `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending` |
 | `create_agent` | Register an agent identity (`name`, `description`, `system_prompt`) so sessions can be attributed to it |
 | `list_agents` | List agent identities already registered with the team |
@@ -274,6 +276,91 @@ and learned.
 Team-specific conventions (which tags to use, the team's `AGENTHIVE_TEAM_ID`) belong in Zone 2 instead - guarded, but team-owned, meant to extend Zone 1 rather than override it. Don't put either in Zone 1: that's platform-locked, and making AgentHive retrieval mandatory org-wide is a bigger call than one repo should make on its own - it would need a PR to `ai-capabilities` and platform-team review.
 
 Repos without that template yet can use a plain `CLAUDE.md` / `.cursor/rules` line instead - same content, just a different file.
+
+
+## Capturing sessions the agent forgot to log (`agenthive-log`)
+
+`log_session` only runs when the model decides to call it. Sessions that
+crash, hit the context limit, or end because someone closed the terminal
+never reach it, and those are exactly the sessions worth a note.
+
+A lifecycle hook fires regardless - but **a hook cannot call an MCP
+tool**. MCP tools are invoked by the model inside its loop; hooks are
+shell commands the harness spawns outside it. The two paths don't
+connect. So this package ships a second console script, `agenthive-log`,
+which talks to the AgentHive API directly using the same
+`AGENTHIVE_URL` / `AGENTHIVE_TOKEN` / `AGENTHIVE_TEAM_ID` you already set
+for the MCP server. Nothing extra to install or configure.
+
+It is a **backstop, not a replacement**. A hook receives metadata, not
+understanding - it knows a session ended, not what was learned. Writing
+a confident-looking node from that would fill the review queue with
+filler and devalue the one thing in AgentHive that needs a human's
+attention. So:
+
+- if `log_session` already succeeded in this session, the hook writes
+  **nothing**;
+- if it didn't, the hook writes one short node tagged `unsummarised` and
+  `hook-captured`, recording that a session happened and was never
+  summarised.
+
+The gap becomes visible. It does not get filled with noise.
+
+### Claude Code
+
+`~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "agenthive-log" }] }
+    ]
+  }
+}
+```
+
+### Cursor
+
+`~/.cursor/hooks.json` (or `<project>/.cursor/hooks.json`, or
+`/etc/cursor/hooks.json` to set it org-wide):
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [{ "command": "agenthive-log" }]
+  }
+}
+```
+
+> Hooks defined in more than one location **all** run, so a `stop` hook
+> present both globally and in a project fires twice for one session.
+> `agenthive-log` fingerprints its payload and skips a duplicate inside a
+> 15-minute window, so this is safe - but it's why the dedupe exists.
+
+### Safety properties
+
+| Property | Behaviour |
+|---|---|
+| Exit code | Always `0`. A memory system must never be able to break the harness. Problems go to stderr. |
+| Missing config | Logs and skips. Not an error. |
+| Unreachable API | Logs and skips. |
+| Duplicate firing | Deduplicated on content hash, 15-minute window. |
+| Transcript content | **Excluded by default.** |
+
+That last one is deliberate. A transcript contains whatever was pasted
+into it, and none of it is wrapped in `<private>` for us - pasting an
+excerpt into shared team memory is how a credential ends up there. The
+approval gate would only catch it after it is already stored and
+rendered in an admin's browser. Set
+`AGENTHIVE_HOOK_INCLUDE_TRANSCRIPT=true` if your team has decided that
+trade is right for them.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENTHIVE_HOOK_INCLUDE_TRANSCRIPT` | `false` | Append a transcript tail to the backstop node. See above. |
+| `AGENTHIVE_HOOK_STATE_DIR` | `$XDG_STATE_HOME/agenthive` | Where the dedupe and "already logged" markers live. |
 
 
 ## Why a separate repo from AgentHive
