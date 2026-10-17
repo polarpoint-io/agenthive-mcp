@@ -1,3 +1,16 @@
+# [1.1.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.0.0...v1.1.0) (2026-10-17)
+
+
+### Bug Fixes
+
+* **hook:** make agenthive-log actually fail-safe, scoped and idempotent ([225a5fd](https://github.com/polarpoint-io/agenthive-mcp/commit/225a5fd9ee1025591405e6171a6b3bcc549114ea)), closes [#1](https://github.com/polarpoint-io/agenthive-mcp/issues/1)
+
+
+### Features
+
+* **tools:** add retrieve_index and fetch_nodes, and the agenthive-lo… ([9d2a713](https://github.com/polarpoint-io/agenthive-mcp/commit/9d2a713d5fe5a191f8236dda118a1190ea72c572))
+* **tools:** add retrieve_index and fetch_nodes, and the agenthive-log hook ([afa37cb](https://github.com/polarpoint-io/agenthive-mcp/commit/afa37cbc86849fa81aa9dfb48b911213a79dce98))
+
 # 1.0.0 (2026-09-16)
 
 
