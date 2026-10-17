@@ -22,6 +22,13 @@
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6" opacity="0.8"/>
     </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" opacity="0.85"/>
+    </marker>
+    <linearGradient id="hookCard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a1f0d"/>
+      <stop offset="100%" stop-color="#17120a"/>
+    </linearGradient>
     <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981" opacity="0.8"/>
     </marker>
@@ -63,14 +70,17 @@
   <path d="M 364 292 L 374 286 L 384 292 L 384 304 L 364 304 Z" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-linejoin="round"/>
   <text x="374" y="333" text-anchor="middle" font-size="12" fill="#e6edf3">Your IDE</text>
   <text x="374" y="349" text-anchor="middle" font-size="9" fill="#8b949e">Cursor · Claude Code</text>
-  <text x="374" y="370" text-anchor="middle" font-size="8" fill="#4b5563">spawns over stdio</text>
+  <text x="374" y="370" text-anchor="middle" font-size="8" fill="#4b5563">spawns both, separately</text>
 
   <line x1="450" y1="316" x2="500" y2="316" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
   <text x="475" y="308" text-anchor="middle" font-size="9" fill="#3b82f6">MCP</text>
 
+  <path d="M 374 386 L 374 518 L 494 518" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-opacity="0.75" stroke-dasharray="4 3" marker-end="url(#arrow-amber)"/>
+  <text x="394" y="508" font-size="8" fill="#f59e0b">on session end</text>
+
   <!-- ─── CENTRE: MCP server card ──────────────────────────────── -->
   <g filter="url(#shadow)">
-    <rect x="500" y="88" width="304" height="468" rx="12" fill="url(#blueCard)" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.7"/>
+    <rect x="500" y="88" width="304" height="364" rx="12" fill="url(#blueCard)" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.7"/>
   </g>
   <!-- Badge -->
   <rect x="572" y="104" width="160" height="20" rx="10" fill="#1e40af" fill-opacity="0.6"/>
@@ -81,40 +91,53 @@
   <line x1="522" y1="188" x2="782" y2="188" stroke="#2d4a7a" stroke-width="1"/>
 
   <!-- Tools -->
-  <rect x="520" y="198" width="264" height="38" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="198" width="4" height="38" rx="2" fill="#3b82f6"/>
-  <text x="536" y="214" font-size="10" fill="#60a5fa" font-weight="bold">retrieve_context</text>
-  <text x="536" y="228" font-size="9" fill="#6e7681">Bounded neighborhood of approved memory</text>
+  <rect x="520" y="198" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="198" width="4" height="32" rx="2" fill="#3b82f6"/>
+  <text x="536" y="212" font-size="10" fill="#60a5fa" font-weight="bold">retrieve_context</text>
+  <text x="536" y="224" font-size="8" fill="#6e7681">Bounded neighborhood of approved memory</text>
 
-  <rect x="520" y="242" width="264" height="38" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="242" width="4" height="38" rx="2" fill="#10b981"/>
-  <text x="536" y="258" font-size="10" fill="#6ee7b7" font-weight="bold">log_session</text>
-  <text x="536" y="272" font-size="9" fill="#6e7681">Writes a memory node · starts pending</text>
+  <rect x="520" y="236" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="236" width="4" height="32" rx="2" fill="#22d3ee"/>
+  <text x="536" y="250" font-size="10" fill="#67e8f9" font-weight="bold">retrieve_index</text>
+  <text x="536" y="262" font-size="8" fill="#6e7681">Same walk, bodies withheld · costs shown</text>
 
-  <rect x="520" y="286" width="264" height="38" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="286" width="4" height="38" rx="2" fill="#8b5cf6"/>
-  <text x="536" y="302" font-size="10" fill="#a78bfa" font-weight="bold">create_agent / list_agents</text>
-  <text x="536" y="316" font-size="9" fill="#6e7681">Register or look up an agent identity</text>
+  <rect x="520" y="274" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="274" width="4" height="32" rx="2" fill="#22d3ee"/>
+  <text x="536" y="288" font-size="10" fill="#67e8f9" font-weight="bold">fetch_nodes</text>
+  <text x="536" y="300" font-size="8" fill="#6e7681">Only the bodies you picked · one call</text>
 
-  <rect x="520" y="330" width="264" height="38" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="330" width="4" height="38" rx="2" fill="#f59e0b"/>
-  <text x="536" y="346" font-size="10" fill="#fcd34d" font-weight="bold">create_task / list_tasks</text>
-  <text x="536" y="360" font-size="9" fill="#6e7681">Register or look up a task to scope to</text>
+  <rect x="520" y="312" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="312" width="4" height="32" rx="2" fill="#10b981"/>
+  <text x="536" y="326" font-size="10" fill="#6ee7b7" font-weight="bold">log_session</text>
+  <text x="536" y="338" font-size="8" fill="#6e7681">Writes a memory node · starts pending</text>
 
-  <rect x="520" y="374" width="264" height="38" rx="6" fill="#1a0f10" stroke="#5f2020" stroke-width="1" stroke-dasharray="3 2"/>
-  <rect x="520" y="374" width="4" height="38" rx="2" fill="#6b7280"/>
-  <text x="536" y="390" font-size="10" fill="#9ca3af" font-weight="bold">approve / reject / users</text>
-  <text x="536" y="404" font-size="9" fill="#6e7681">Admin-only — deliberately not a tool here</text>
+  <rect x="520" y="350" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="350" width="4" height="32" rx="2" fill="#8b5cf6"/>
+  <text x="536" y="364" font-size="10" fill="#a78bfa" font-weight="bold">agents / tasks</text>
+  <text x="536" y="376" font-size="8" fill="#6e7681">Register or look up an identity or a scope</text>
 
-  <text x="652" y="432" text-anchor="middle" font-size="9" fill="#4b5563" letter-spacing="0.5">why: an agent shouldn't approve its own memory</text>
+  <rect x="520" y="388" width="264" height="32" rx="6" fill="#1a0f10" stroke="#5f2020" stroke-width="1" stroke-dasharray="3 2"/>
+  <rect x="520" y="388" width="4" height="32" rx="2" fill="#6b7280"/>
+  <text x="536" y="402" font-size="10" fill="#9ca3af" font-weight="bold">approve / reject / users</text>
+  <text x="536" y="414" font-size="8" fill="#6e7681">Admin-only — deliberately not a tool here</text>
 
-  <!-- Transport -->
-  <rect x="562" y="498" width="180" height="18" rx="9" fill="#0d1117" fill-opacity="0.7"/>
-  <text x="652" y="510" text-anchor="middle" font-size="8" fill="#4b5563" letter-spacing="0.8">STDIO · HTTP/SSE · FastMCP</text>
+  <text x="652" y="438" text-anchor="middle" font-size="8" fill="#4b5563" letter-spacing="0.5">why: an agent shouldn't approve its own memory</text>
+
+  <!-- ─── CENTRE-LOWER: the hook, a second entry point ─────────── -->
+  <g filter="url(#shadow)">
+    <rect x="500" y="468" width="304" height="100" rx="12" fill="url(#hookCard)" stroke="#f59e0b" stroke-width="1.5" stroke-opacity="0.55"/>
+  </g>
+  <rect x="552" y="480" width="200" height="18" rx="9" fill="#78350f" fill-opacity="0.55"/>
+  <text x="652" y="493" text-anchor="middle" font-size="8" fill="#fcd34d" letter-spacing="0.8">LIFECYCLE HOOK · OUTSIDE THE LOOP</text>
+  <text x="652" y="518" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="bold">agenthive-log</text>
+  <text x="652" y="534" text-anchor="middle" font-size="9" fill="#fbbf24">a hook can't call an MCP tool</text>
+  <text x="652" y="550" text-anchor="middle" font-size="8" fill="#6e7681">Session ended unlogged? Records the gap, nothing more</text>
 
   <!-- ─── RIGHT: outputs ────────────────────────────────────────── -->
   <line x1="806" y1="250" x2="870" y2="220" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.55" marker-end="url(#arrow)" stroke-dasharray="4 3"/>
   <line x1="806" y1="330" x2="870" y2="368" stroke="#10b981" stroke-width="1.5" stroke-opacity="0.55" marker-end="url(#arrow-green)" stroke-dasharray="4 3"/>
+  <path d="M 806 500 Q 846 480 866 452" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-opacity="0.5" marker-end="url(#arrow-amber)" stroke-dasharray="4 3"/>
+  <text x="812" y="474" font-size="7" fill="#92700f">same API</text>
 
   <!-- AgentHive -->
   <g filter="url(#shadow)">
