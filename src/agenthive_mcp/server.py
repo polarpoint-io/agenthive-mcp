@@ -44,6 +44,7 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from .client import get_config as _get_config
+from .client import SESSION_ID as _SESSION_ID
 from .client import request as _request
 from .hooklog import mark_logged as _mark_logged
 
@@ -76,7 +77,8 @@ def retrieve_context(anchor: str, hops: int = 2, hub_cutoff: int = 15) -> dict:
     _, _, team_id = _get_config()
     return _request(
         "GET", f"/teams/{team_id}/memory/retrieve",
-        query={"anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff},
+        query={"anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff,
+               "session_id": _SESSION_ID},
     )
 
 
@@ -104,6 +106,7 @@ def retrieve_index(
     _, _, team_id = _get_config()
     query: dict = {
         "anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff, "mode": "index",
+        "session_id": _SESSION_ID,
     }
     if tags:
         query["tags"] = ",".join(tags)
@@ -145,6 +148,24 @@ def report_gaps(min_count: int = 2) -> dict:
 
 
 @mcp.tool()
+def confirm_memory(node_id: str, verdict: str, reason: str = "") -> dict:
+    """Report back on a memory node you actually used this session.
+
+    `verdict` is "confirmed" (it was right) or "contradicted" (it was
+    wrong). Only for notes you USED - a guess is not evidence.
+
+    This is how the graph learns what is still TRUE, as opposed to what
+    is merely popular. A contradiction never deletes anything: the note
+    stops being promoted and goes to a human to resolve. Counted once
+    per person, so reporting twice changes nothing."""
+    _, _, team_id = _get_config()
+    return _request(
+        "POST", f"/teams/{team_id}/memory/{node_id}/feedback",
+        body={"verdict": verdict, "reason": reason},
+    )
+
+
+@mcp.tool()
 def log_session(
     title: str,
     body: str,
@@ -152,6 +173,8 @@ def log_session(
     links: list[str] | None = None,
     agent_id: str | None = None,
     task_id: str | None = None,
+    outcome: str | None = None,
+    turns: int | None = None,
 ) -> dict:
     """Log what happened this session as a memory node for the team to
     reuse. Call this once at the end of a session that learned something
@@ -164,13 +187,22 @@ def log_session(
     help retrieval and review. `agent_id`/`task_id` are optional ids from
     create_agent/create_task - attaching them lets an admin auto-approve
     by agent (see create_auto_approve_rule, admin-only) and lets future
-    retrieval be scoped to a task."""
+    retrieval be scoped to a task.
+
+    `outcome` and `turns` are optional and are what make the team's
+    evidence report possible: "succeeded", "partial" or "failed" for how
+    this session actually went, and how many turns it took. Say
+    "failed" when it failed - a report nobody is honest in is worse than
+    no report, because it looks like data."""
     _, _, team_id = _get_config()
     result = _request(
         "POST", f"/teams/{team_id}/memory",
         body={
             "title": title, "body": body, "tags": tags or [], "links": links or [],
             "agent_id": agent_id, "task_id": task_id,
+            "session_id": _SESSION_ID,
+            **({"outcome": outcome} if outcome else {}),
+            **({"turns": turns} if turns else {}),
         },
     )
     # Leave a local breadcrumb so the agenthive-log hook knows the model

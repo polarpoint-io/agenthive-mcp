@@ -19,6 +19,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 class AgentHiveConfigError(RuntimeError):
@@ -28,6 +29,14 @@ class AgentHiveConfigError(RuntimeError):
 class AgentHiveError(RuntimeError):
     """Raised on any non-2xx response from the AgentHive API, with the
     server's own error message rather than a generic HTTP status."""
+
+
+# One value per MCP server process. The harness spawns this server once
+# per agent session over stdio, so "this process" and "this session" are
+# the same thing - which is the session identity AgentHive needs to tell
+# sessions that got memory from sessions that did not, without anyone
+# having to invent or pass one.
+SESSION_ID = uuid.uuid4().hex
 
 
 def get_config() -> tuple[str, str, str]:
