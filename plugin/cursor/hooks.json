@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt":  [{ "command": "agenthive-hook" }],
+    "afterFileEdit":       [{ "command": "agenthive-hook" }],
+    "afterShellCommand":   [{ "command": "agenthive-hook" }],
+    "stop":                [{ "command": "agenthive-hook" }]
+  }
+}

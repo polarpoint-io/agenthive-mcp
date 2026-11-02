@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "agenthive-hook" }] }],
+    "PostToolUse":  [{ "hooks": [{ "type": "command", "command": "agenthive-hook" }] }],
+    "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "agenthive-hook" }] }]
+  }
+}

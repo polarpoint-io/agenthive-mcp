@@ -44,6 +44,9 @@ agenthive-mcp = "agenthive_mcp.server:main"
 # The lifecycle-hook entry point. Not an MCP tool: hooks are spawned by the
 # harness outside the model's loop and cannot call one. See hooklog.py.
 agenthive-log = "agenthive_mcp.hooklog:main"
+# The cross-harness hook entry point and its CLI. See plugin/.
+agenthive-hook = "agenthive_mcp.plugin:main"
+agenthive = "agenthive_mcp.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

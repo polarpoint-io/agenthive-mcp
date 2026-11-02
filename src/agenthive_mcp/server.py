@@ -43,8 +43,8 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from .client import get_config as _get_config
 from .client import SESSION_ID as _SESSION_ID
+from .client import get_config as _get_config
 from .client import request as _request
 from .hooklog import mark_logged as _mark_logged
 
