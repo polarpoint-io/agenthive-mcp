@@ -36,8 +36,14 @@ def fake_server():
         server.close()
 
 
-def _server_params(base_url: str, token: str = TOKEN, team_id: str = TEAM_ID) -> StdioServerParameters:
+def _server_params(base_url: str, token: str = TOKEN, team_id: str = TEAM_ID,
+                    setup_tools: bool = True) -> StdioServerParameters:
     env = dict(os.environ)
+    # The agent/task helpers are off by default now - their definitions
+    # cost ~217 tokens on every request in sessions that never call
+    # them. These tests exercise them, so they ask for them.
+    if setup_tools:
+        env["AGENTHIVE_MCP_SETUP_TOOLS"] = "true"
     if token is not None:
         env["AGENTHIVE_TOKEN"] = token
     else:

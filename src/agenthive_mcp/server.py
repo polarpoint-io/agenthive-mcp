@@ -64,16 +64,14 @@ mcp = FastMCP(
 
 @mcp.tool()
 def retrieve_context(anchor: str, hops: int = 2, hub_cutoff: int = 15) -> dict:
-    """Retrieve a bounded neighborhood of this team's reviewed, approved
-    memory around a topic. Call this once at the start of a session,
-    before starting work, so you inherit what teammates already learned
-    instead of rediscovering it. `anchor` is the topic/title to search
-    around (e.g. "Postgres connection pool exhaustion"); `hops` bounds how
-    far the traversal spreads from it (default 2); `hub_cutoff` stops
-    traversal through overly-connected "hub" nodes so one popular node
-    doesn't pull in the whole graph. Returns a `neighborhood` list of
-    memory nodes plus `approx_tokens`, what folding them into context
-    would actually cost."""
+    """Retrieve this team's reviewed memory around a topic.
+
+    Call once at the start of a session so you inherit what teammates
+    already learned. `anchor` is the topic to search around.
+
+    Large neighbourhoods come back as an index (titles and per-node
+    costs, no bodies) - follow with fetch_nodes for the ones worth
+    reading."""
     _, _, team_id = _get_config()
     return _request(
         "GET", f"/teams/{team_id}/memory/retrieve",
@@ -89,20 +87,11 @@ def retrieve_index(
     hub_cutoff: int = 15,
     tags: list[str] | None = None,
 ) -> dict:
-    """Preview what retrieve_context WOULD return, without paying for the
-    bodies. Same traversal, same nodes, but each entry is just id, title,
-    tier, tags and `approx_tokens` - what reading that one node would
-    cost. Follow up with fetch_nodes(ids) for the ones worth reading.
+    """Preview what retrieve_context would return, without the bodies.
 
-    Prefer this over retrieve_context when the topic is broad, when you
-    only need one specific thing from a wide neighborhood, or when
-    retrieve_context's `approx_tokens` came back larger than you want to
-    spend. Prefer retrieve_context when the neighborhood is small or you
-    intend to read most of it - two round trips to save a few hundred
-    tokens is a worse deal than one round trip.
-
-    `tags` optionally narrows to nodes carrying any of them; the reserved
-    ones are "decision", "bugfix", "security_alert" and "sensitive"."""
+    Returns ids, titles, tiers, tags and what each body would cost.
+    Follow with fetch_nodes. `tags` narrows it; the reserved ones are
+    decision, bugfix, security_alert, sensitive."""
     _, _, team_id = _get_config()
     query: dict = {
         "anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff, "mode": "index",
@@ -115,14 +104,10 @@ def retrieve_index(
 
 @mcp.tool()
 def fetch_nodes(ids: list[str]) -> dict:
-    """Fetch the full bodies of specific memory nodes by id, after
-    retrieve_index showed you which ones are worth reading. Pass every id
-    you want in ONE call rather than one call per id.
+    """Fetch full bodies for specific node ids, in ONE call.
 
-    Ids you are not entitled to - a node still pending review, one that
-    was rejected, or one belonging to another team - come back in
-    `missing` rather than as an error. That is the review gate working,
-    not a failure to retry."""
+    Ids you are not entitled to come back in `missing` rather than as an
+    error - that is the review gate working."""
     _, _, team_id = _get_config()
     return _request("POST", f"/teams/{team_id}/memory/fetch", body={"ids": ids})
 
@@ -131,33 +116,20 @@ def fetch_nodes(ids: list[str]) -> dict:
 def report_gaps(min_count: int = 2) -> dict:
     """What this team keeps searching for and never finds.
 
-    Worth calling at the START of a session, next to retrieve_context.
-    If the thing you are about to work on appears here, the team has
-    looked for it repeatedly and come back empty every time - which
-    makes your log_session at the end of this session the fix for a
-    standing gap rather than one more note.
-
-    Each entry carries a miss count. `awaiting_review: true` means
-    something already written WOULD have answered it and is sitting
-    unapproved, so the fix there is a human clearing the review queue,
-    not you writing it again - don't duplicate it.
-
-    Read-only. This proposes nothing and changes nothing."""
+    Call at session start. If your work is on this list, your
+    log_session closes a standing gap. Entries flagged awaiting_review
+    already have an answer stuck in the queue - don't write it twice."""
     _, _, team_id = _get_config()
     return _request("GET", f"/teams/{team_id}/gaps", query={"min_count": min_count})
 
 
 @mcp.tool()
 def confirm_memory(node_id: str, verdict: str, reason: str = "") -> dict:
-    """Report back on a memory node you actually used this session.
+    """Report on a memory node you actually USED this session.
 
-    `verdict` is "confirmed" (it was right) or "contradicted" (it was
-    wrong). Only for notes you USED - a guess is not evidence.
-
-    This is how the graph learns what is still TRUE, as opposed to what
-    is merely popular. A contradiction never deletes anything: the note
-    stops being promoted and goes to a human to resolve. Counted once
-    per person, so reporting twice changes nothing."""
+    `verdict` is "confirmed" or "contradicted". A contradiction never
+    deletes: the note stops being promoted and goes to a human. Counted
+    once per person."""
     _, _, team_id = _get_config()
     return _request(
         "POST", f"/teams/{team_id}/memory/{node_id}/feedback",
@@ -176,24 +148,14 @@ def log_session(
     outcome: str | None = None,
     turns: int | None = None,
 ) -> dict:
-    """Log what happened this session as a memory node for the team to
-    reuse. Call this once at the end of a session that learned something
-    worth keeping - a root cause, a fix, a decision, a gotcha. The node
-    starts PENDING and is invisible to retrieve_context until an admin
-    approves it (or it matches an auto-approve rule) - this is a
-    deliberate review gate, not a bug. `title` is a short, searchable
-    summary (this is what future retrieve_context anchors match against);
-    `body` is the actual content; `tags` and `links` are optional and
-    help retrieval and review. `agent_id`/`task_id` are optional ids from
-    create_agent/create_task - attaching them lets an admin auto-approve
-    by agent (see create_auto_approve_rule, admin-only) and lets future
-    retrieval be scoped to a task.
+    """Log what this session learned, for the team to reuse.
 
-    `outcome` and `turns` are optional and are what make the team's
-    evidence report possible: "succeeded", "partial" or "failed" for how
-    this session actually went, and how many turns it took. Say
-    "failed" when it failed - a report nobody is honest in is worse than
-    no report, because it looks like data."""
+    Call once at the end. The node starts PENDING and is invisible until
+    an admin approves it - that gate is deliberate.
+
+    `outcome` ("succeeded", "partial", "failed") and `turns` are what
+    make the team's evidence report possible. Say "failed" when it
+    failed: a report nobody is honest in looks like data."""
     _, _, team_id = _get_config()
     result = _request(
         "POST", f"/teams/{team_id}/memory",
@@ -212,7 +174,14 @@ def log_session(
     return result
 
 
-@mcp.tool()
+# Setup operations: registering an agent identity or a task. A normal
+# working session never calls these, yet their definitions were sent on
+# every request. Off unless asked for.
+_SETUP_TOOLS = os.environ.get("AGENTHIVE_MCP_SETUP_TOOLS", "").lower() in ("1", "true", "yes")
+_setup_tool = mcp.tool() if _SETUP_TOOLS else (lambda fn: fn)
+
+
+@_setup_tool
 def create_agent(name: str, description: str = "", system_prompt: str = "") -> dict:
     """Register an agent identity with the team, so logged sessions can be
     attributed to it (pass the returned id as log_session's `agent_id`)
@@ -226,7 +195,7 @@ def create_agent(name: str, description: str = "", system_prompt: str = "") -> d
     )
 
 
-@mcp.tool()
+@_setup_tool
 def list_agents() -> dict:
     """List the agent identities already registered with this team, e.g.
     to find an existing agent's id instead of creating a duplicate with
@@ -235,7 +204,7 @@ def list_agents() -> dict:
     return _request("GET", f"/teams/{team_id}/agents")
 
 
-@mcp.tool()
+@_setup_tool
 def create_task(name: str, description: str = "") -> dict:
     """Register a task with the team, so logged sessions can be scoped to
     it (pass the returned id as log_session's `task_id`) - useful when
@@ -249,7 +218,7 @@ def create_task(name: str, description: str = "") -> dict:
     )
 
 
-@mcp.tool()
+@_setup_tool
 def list_tasks() -> dict:
     """List the tasks already registered with this team, e.g. to find an
     existing task's id instead of creating a duplicate with create_task."""

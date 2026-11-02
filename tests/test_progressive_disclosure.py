@@ -452,3 +452,52 @@ def test_report_gaps_flags_what_is_already_waiting_for_review(fake_server):
     result = _call(fake_server.base_url, "report_gaps", {})
     assert result["awaiting_review"] == 1
     assert result["gaps"][0]["pending_title"] == "Postgres pool"
+
+
+# ---------------------------------------------------------------------------
+# Tool surface
+# ---------------------------------------------------------------------------
+
+def test_setup_tools_are_off_by_default(fake_server):
+    """Every loaded tool's definition is sent on every request. The four
+    agent/task helpers are setup operations a working session never
+    calls, and they cost ~217 tokens in each one that doesn't."""
+    async def run():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write), \
+                ClientSession(read, write) as session:
+            await session.initialize()
+            return {t.name for t in (await session.list_tools()).tools}
+
+    names = anyio.run(run)
+    assert not names & {"create_agent", "list_agents", "create_task", "list_tasks"}
+    # The tools a session actually uses are all still there.
+    assert {"retrieve_context", "retrieve_index", "fetch_nodes",
+            "report_gaps", "log_session", "confirm_memory"} <= names
+
+
+def test_setup_tools_come_back_when_asked_for(fake_server):
+    async def run():
+        params = _server_params(fake_server.base_url)
+        params.env["AGENTHIVE_MCP_SETUP_TOOLS"] = "true"
+        async with stdio_client(params) as (read, write), \
+                ClientSession(read, write) as session:
+            await session.initialize()
+            return {t.name for t in (await session.list_tools()).tools}
+
+    assert {"create_agent", "list_agents", "create_task", "list_tasks"} <= anyio.run(run)
+
+
+def test_no_tool_description_is_bloated(fake_server):
+    """A regression guard on the thing that made this net-negative:
+    1,130 tokens of definitions went out with every single request."""
+    async def run():
+        async with stdio_client(_server_params(fake_server.base_url)) as (read, write), \
+                ClientSession(read, write) as session:
+            await session.initialize()
+            return [(t.name, len(t.description or "")) for t in (await session.list_tools()).tools]
+
+    tools = anyio.run(run)
+    total = sum(chars for _, chars in tools)
+    assert total < 2000, f"tool definitions back over budget: {total} chars"
+    for name, chars in tools:
+        assert chars < 500, f"{name} description is {chars} chars"
