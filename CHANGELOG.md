@@ -1,3 +1,16 @@
+# [1.3.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.2.0...v1.3.0) (2026-11-02)
+
+
+### Features
+
+* **plugin:** one hook implementation for Claude Code, VS Code and Cursor ([066382f](https://github.com/polarpoint-io/agenthive-mcp/commit/066382ff24f1e3be3abcf50393d6d616d675127e))
+* **tools:** confirm_memory, and a session id so evidence is possible ([11ac2f1](https://github.com/polarpoint-io/agenthive-mcp/commit/11ac2f16b0c681d41939bfe103707819fc39c7b8))
+
+
+### Performance Improvements
+
+* **tools:** cut the per-request definition overhead from ~1130 to ~378 ([81858b2](https://github.com/polarpoint-io/agenthive-mcp/commit/81858b25d91e6b8a952333131c83716ca6465cb7))
+
 # [1.2.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.1.0...v1.2.0) (2026-10-17)
 
 
