@@ -7,10 +7,11 @@ agent, asking costs a model turn. Here it costs nothing.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
-from . import facts, toolprune
+from . import facts, manifests, toolprune
 from .client import AgentHiveConfigError, get_config
 
 
@@ -92,14 +93,122 @@ def cmd_doctor(argv) -> int:
     return 0
 
 
+def cmd_install(argv) -> int:
+    """Write this harness's hook manifest, merging rather than replacing.
+
+    Defaults to the harness AGENTHIVE_HOST names, because somebody on
+    Cursor has to set that variable anyway and making them repeat it
+    here would be the second chance to get it wrong.
+    """
+    harness, argv = _harness_arg(argv)
+    dry = "--dry-run" in argv
+    if "--print" in argv:
+        sys.stdout.write(manifests.render(harness))
+        return 0
+
+    dest = manifests.destination(harness, _project_arg(argv))
+    existing = _read_json(dest)
+    merged, changed = manifests.merge(existing, harness)
+
+    if not changed:
+        print(f"already installed for {harness}: {dest}")
+        return 0
+    if dry:
+        print(f"would write {dest}  (events: {', '.join(changed)})")
+        sys.stdout.write(json.dumps(merged, indent=2) + "\n")
+        return 0
+
+    if existing is not None:
+        backup = dest.with_suffix(dest.suffix + ".agenthive-bak")
+        backup.write_text(json.dumps(existing, indent=2) + "\n")
+        print(f"backed up existing config to {backup}")
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(merged, indent=2) + "\n")
+    print(f"installed for {harness}: {dest}")
+    print(f"  events: {', '.join(changed)}")
+    if harness == "cursor":
+        print("  export AGENTHIVE_HOST=cursor in your shell profile - "
+              "without it, session end is a silent no-op")
+    print("  the hook does NOT inherit your MCP client's env block; "
+          "set AGENTHIVE_URL / AGENTHIVE_TEAM_ID / AGENTHIVE_TOKEN in "
+          "your shell profile, then run: agenthive doctor")
+    return 0
+
+
+def cmd_uninstall(argv) -> int:
+    """Take back exactly what install wrote, and nothing else."""
+    harness, argv = _harness_arg(argv)
+    dest = manifests.destination(harness, _project_arg(argv))
+    existing = _read_json(dest)
+    if existing is None:
+        print(f"nothing to remove: {dest} does not exist")
+        return 0
+    merged, changed = manifests.uninstall(existing, harness)
+    if not changed:
+        print(f"nothing of ours in {dest}")
+        return 0
+    dest.write_text(json.dumps(merged, indent=2) + "\n")
+    print(f"removed from {dest}  (events: {', '.join(changed)})")
+    return 0
+
+
+def _harness_arg(argv):
+    """Pull --harness out of argv, defaulting to AGENTHIVE_HOST."""
+    rest = list(argv)
+    harness = _host()
+    for flag in ("--harness", "-H"):
+        if flag in rest:
+            i = rest.index(flag)
+            try:
+                harness = rest[i + 1].strip().lower()
+            except IndexError:
+                raise SystemExit(f"{flag} needs a value: "
+                                 f"{', '.join(sorted(manifests.MANIFESTS))}") from None
+            del rest[i:i + 2]
+    if harness not in manifests.MANIFESTS:
+        raise SystemExit(f"unknown harness {harness!r}; expected one of "
+                         f"{', '.join(sorted(manifests.MANIFESTS))}")
+    return harness, rest
+
+
+def _project_arg(argv):
+    """VS Code's manifest is per-project, so --project picks which one."""
+    if "--project" in argv:
+        i = argv.index("--project")
+        try:
+            return argv[i + 1]
+        except IndexError:
+            raise SystemExit("--project needs a directory") from None
+    return None
+
+
+def _read_json(path):
+    """Existing config, or None. A file we cannot parse is not a None."""
+    if not path.exists():
+        return None
+    text = path.read_text()
+    if not text.strip():
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise SystemExit(
+            f"{path} is not valid JSON ({e}); refusing to touch it - "
+            "fix or move it and run this again"
+        ) from None
+
+
 COMMANDS = {"status": cmd_status, "facts": cmd_facts,
-            "toolprune": cmd_toolprune, "doctor": cmd_doctor}
+            "toolprune": cmd_toolprune, "doctor": cmd_doctor,
+            "install": cmd_install, "uninstall": cmd_uninstall}
 
 
 def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
-        print("agenthive <status|facts|toolprune [apply|restore]|doctor>")
+        print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor>\n"
+              "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]")
         return 0
     cmd = COMMANDS.get(argv[0])
     if not cmd:

@@ -5,7 +5,23 @@
 [![CI](https://github.com/polarpoint-io/agenthive-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/polarpoint-io/agenthive-mcp/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/polarpoint-io/agenthive-mcp)](LICENSE)
 
-A Model Context Protocol (MCP) server that exposes [AgentHive](https://github.com/polarpoint-io/agenthive)'s shared, reviewed team memory to LLM clients (Claude Desktop, Claude Code, Cursor, VS Code, etc.) - `retrieve_context`, `log_session`, `create_agent`, `list_agents`, `create_task`, and `list_tasks` as native tools, instead of a `CLAUDE.md` / `.cursor/rules` instruction block that calls AgentHive's HTTP API by hand.
+A Model Context Protocol (MCP) server that exposes [AgentHive](https://github.com/polarpoint-io/agenthive)'s shared, reviewed team memory to LLM clients (Claude Desktop, Claude Code, Cursor, VS Code, etc.) as native tools, instead of a `CLAUDE.md` / `.cursor/rules` instruction block that calls AgentHive's HTTP API by hand.
+
+It ships in two halves, because they run in different places:
+
+- **The MCP server** — tools the *model* decides to call, inside its loop: `retrieve_context`, `retrieve_index`, `fetch_nodes`, `report_gaps`, `log_session`, `confirm_memory`.
+- **The plugin** — hooks the *harness* spawns, outside the loop, on Claude Code, VS Code and Cursor: fact injection, tool pruning, a loop guard, and a session-end backstop. A hook cannot call an MCP tool, which is why these are separate and why the plugin talks to the AgentHive API directly.
+
+Install both; neither needs the other to work:
+
+```sh
+pip install agenthive-mcp
+agenthive install --harness claude     # the plugin; or: vscode, cursor
+agenthive doctor
+```
+
+plus your MCP client's own config for the server - see
+[Client integrations](#client-integrations).
 
 > **PyPI**: `pip install agenthive-mcp` &nbsp;·&nbsp; **Image**: `ghcr.io/polarpoint-io/agenthive-mcp:latest` &nbsp;·&nbsp; **Repo**: <https://github.com/polarpoint-io/agenthive-mcp>
 
@@ -16,6 +32,7 @@ A Model Context Protocol (MCP) server that exposes [AgentHive](https://github.co
 - [Client integrations](#client-integrations)
 - [Tool reference](#tool-reference)
 - [Wiring an agent up to actually use these tools](#wiring-an-agent-up-to-actually-use-these-tools)
+- [The plugin](#the-plugin-claude-code-vs-code-cursor)
 - [Why a separate repo from AgentHive](#why-a-separate-repo-from-agenthive)
 - [Running from source](#running-from-source)
 - [Development](#development)
@@ -253,11 +270,21 @@ Every tool here is a **member**-role AgentHive call - the same tier your persona
 | `retrieve_index` | Same traversal as `retrieve_context` with the bodies withheld - ids, titles, tiers, tags and a per-node token cost, so a session can choose what to read before paying for it (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`) |
 | `fetch_nodes` | Full bodies for specific ids from `retrieve_index` (`ids`). Ids you are not entitled to come back in `missing`, not as an error |
 | `report_gaps` | What this team keeps searching for and never finds (`min_count`). Call at session start next to retrieval: if your work is on the list, your `log_session` closes a standing gap. Entries flagged `awaiting_review` already have an answer stuck in the queue - don't write it twice |
-| `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending` |
-| `create_agent` | Register an agent identity (`name`, `description`, `system_prompt`) so sessions can be attributed to it |
-| `list_agents` | List agent identities already registered with the team |
-| `create_task` | Register a task (`name`, `description`) so sessions can be scoped to it |
-| `list_tasks` | List tasks already registered with the team |
+| `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending`. Optionally carries the session's `outcome` and turn count, which is what the evidence endpoint measures |
+| `confirm_memory` | Say whether a node you were served was still true in practice (`node_id`, `verdict`). A contradiction is *reported*, never acted on: it blocks promotion and can propose a demotion for a human to approve, but nothing is removed by a vote |
+
+### Tool definitions cost tokens too
+
+These definitions are sent on **every** request for the whole session, so
+the tool surface is part of the token bill, not separate from it. The six
+above come to roughly 378 tokens. The setup calls - `create_agent`,
+`list_agents`, `create_task`, `list_tasks` - are used once per team and
+then never again, so they are **off by default**; export
+`AGENTHIVE_MCP_SETUP_TOOLS=1` for the session where you need them and
+leave it unset afterwards.
+
+Admin calls are not behind a flag - they are not here at all, for the
+reason in the paragraph above this table.
 
 
 ## Wiring an agent up to actually use these tools
@@ -277,6 +304,113 @@ and learned.
 Team-specific conventions (which tags to use, the team's `AGENTHIVE_TEAM_ID`) belong in Zone 2 instead - guarded, but team-owned, meant to extend Zone 1 rather than override it. Don't put either in Zone 1: that's platform-locked, and making AgentHive retrieval mandatory org-wide is a bigger call than one repo should make on its own - it would need a PR to `ai-capabilities` and platform-team review.
 
 Repos without that template yet can use a plain `CLAUDE.md` / `.cursor/rules` line instead - same content, just a different file.
+
+
+## The plugin (Claude Code, VS Code, Cursor)
+
+The MCP server can only act when the model chooses to call it. Four
+things worth doing cannot wait for that choice, so they run as harness
+hooks instead - one implementation in `src/agenthive_mcp/hooks.py`,
+three thin manifests under
+[`plugin/`](https://github.com/polarpoint-io/agenthive-mcp/tree/main/plugin).
+
+| | What it does | Switch |
+|---|---|---|
+| **Facts** | Injects short team facts at session start, with no anchor and no tool call. The one path that *replaces* exploration instead of adding to context - which is the only way memory reduces a token bill rather than growing it. | `AGENTHIVE_FACTS` |
+| **Tool pruning** | Records which of the loaded tools a session actually used, pools that across the team, and writes a deny list once several people agree. | `AGENTHIVE_TOOLPRUNE` |
+| **Loop guard** | Notices a turn repeating the same failure and adds one note suggesting a different approach. Local, no model. | `AGENTHIVE_LOOPGUARD` |
+| **Session backstop** | Records that a session ended unlogged. Described in full below. | always on |
+
+All default on; set any to `off`.
+
+### Installing it
+
+```sh
+pip install agenthive-mcp
+agenthive install --harness claude     # or: vscode, cursor
+```
+
+That is the whole install. `--harness` defaults to `$AGENTHIVE_HOST`, so
+on Cursor (where you have to set that variable anyway) `agenthive
+install` on its own is enough.
+
+**It merges, it does not overwrite.** `~/.claude/settings.json` is your
+file and may already hold your own settings and other people's hooks.
+The installer adds its three entries to the events it uses, leaves
+everything else alone, backs up what was there to
+`~/.claude/settings.json.agenthive-bak` first, and does nothing at all
+on a second run. If the file is not valid JSON it refuses to touch it
+rather than guessing.
+
+Look before you leap, if you'd rather:
+
+```sh
+agenthive install --harness claude --dry-run   # print the merged result, write nothing
+agenthive install --harness claude --print     # just the manifest, for hand-editing
+```
+
+And to take it back out - exactly the entries it wrote, nothing else:
+
+```sh
+agenthive uninstall --harness claude
+```
+
+### Where each manifest lands
+
+| Harness | Destination | Scope |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | per user |
+| VS Code | `<project>/.github/hooks/agenthive.json` | **per project** - `--project DIR` to pick one, otherwise the current directory |
+| Cursor | `~/.cursor/hooks.json` | per user |
+
+The manifests themselves are in
+[`plugin/`](https://github.com/polarpoint-io/agenthive-mcp/tree/main/plugin)
+if you'd rather read them before running anything; they are generated
+from `src/agenthive_mcp/manifests.py` and a test fails if the two
+disagree, so what you read there is what the installer writes.
+
+### On Cursor, `AGENTHIVE_HOST` is not optional
+
+```sh
+echo 'export AGENTHIVE_HOST=cursor' >> ~/.zshrc   # or ~/.bashrc
+```
+
+`stop` exists in both hook families and carries nothing saying which one
+sent it. Without this the sniff can guess Claude Code, and a wrong guess
+turns session-end into a **silent** no-op - no error, nothing in the
+review queue, and no sign anything is wrong.
+
+### Then give it credentials, and check
+
+The plugin **does not inherit your MCP client's `env` block** - the
+harness spawns it as a separate process. If your `AGENTHIVE_*` variables
+only live in `claude_desktop_config.json` or `~/.cursor/mcp.json`, the
+hook starts unconfigured and writes nothing, silently. Put them in your
+shell profile instead (full detail under
+[Giving the hook its credentials](#giving-the-hook-its-credentials)):
+
+```sh
+# ~/.zshrc or ~/.bashrc
+export AGENTHIVE_URL=https://your-agenthive-host
+export AGENTHIVE_TEAM_ID=your_team_id
+export AGENTHIVE_TOKEN=your_personal_token
+```
+
+Then, in a new shell:
+
+```sh
+agenthive doctor
+```
+
+which prints the harness it detected, whether the config resolved, and
+whether the server answered - in that order, because that is the order
+in which it tends to go wrong.
+
+Three guarantees hold across all four: it never stops a turn, it never
+calls a model, and it never breaks a session - every handler is wrapped
+and the entry point always exits 0. Full detail, including the VS Code
+preview caveat and Copilot Business policy, is in
+[`plugin/README.md`](https://github.com/polarpoint-io/agenthive-mcp/blob/main/plugin/README.md).
 
 
 ## Capturing sessions the agent forgot to log (`agenthive-log`)

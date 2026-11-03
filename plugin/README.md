@@ -19,29 +19,23 @@ payload and the same handlers serve them. Cursor's event names differ
 
 ```sh
 pip install agenthive-mcp
+agenthive install --harness claude     # or: vscode, cursor
+agenthive doctor
 ```
 
-Then copy the manifest for your harness, and give the hook its
-credentials — **it does not inherit your MCP client's `env` block**, see
-the main README.
+`--harness` defaults to `$AGENTHIVE_HOST`. The installer merges into any
+config already there, backs it up first, is a no-op on a second run, and
+refuses to touch a file that is not valid JSON. `agenthive uninstall`
+takes back exactly the entries it wrote.
 
-**Claude Code**
-```sh
-mkdir -p ~/.claude && cp plugin/claude/settings.json ~/.claude/settings.json
-```
+The JSON in these directories is generated from
+`src/agenthive_mcp/manifests.py`; `tests/test_manifests.py` fails if the
+two disagree, so copying a file by hand works too and gets you the same
+bytes - it just will not merge, so check what is in the destination
+first.
 
-**VS Code**
-```sh
-mkdir -p .github/hooks && cp plugin/vscode/agenthive.json .github/hooks/
-```
-
-**Cursor**
-```sh
-mkdir -p ~/.cursor && cp plugin/cursor/hooks.json ~/.cursor/
-export AGENTHIVE_HOST=cursor
-```
-
-Check it with `agenthive doctor`.
+Credentials do not come from your MCP client's `env` block - see the
+main README.
 
 `AGENTHIVE_HOST` matters on Cursor. `stop` exists in both hook families
 and carries no marker saying which sent it, so the sniff can guess

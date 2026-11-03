@@ -69,7 +69,7 @@
   <circle cx="374" cy="297" r="24" fill="#111827" stroke="#6366f1" stroke-width="1.5"/>
   <path d="M 364 292 L 374 286 L 384 292 L 384 304 L 364 304 Z" fill="none" stroke="#a5b4fc" stroke-width="2" stroke-linejoin="round"/>
   <text x="374" y="333" text-anchor="middle" font-size="12" fill="#e6edf3">Your IDE</text>
-  <text x="374" y="349" text-anchor="middle" font-size="9" fill="#8b949e">Cursor · Claude Code</text>
+  <text x="374" y="349" text-anchor="middle" font-size="8" fill="#8b949e">Claude Code · VS Code · Cursor</text>
   <text x="374" y="370" text-anchor="middle" font-size="8" fill="#4b5563">spawns both, separately</text>
 
   <line x1="450" y1="316" x2="500" y2="316" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
@@ -94,44 +94,44 @@
   <rect x="520" y="198" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
   <rect x="520" y="198" width="4" height="32" rx="2" fill="#3b82f6"/>
   <text x="536" y="212" font-size="10" fill="#60a5fa" font-weight="bold">retrieve_context</text>
-  <text x="536" y="224" font-size="8" fill="#6e7681">Bounded neighborhood of approved memory</text>
+  <text x="536" y="224" font-size="8" fill="#6e7681">Index above 800 tokens, automatically</text>
 
   <rect x="520" y="236" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
   <rect x="520" y="236" width="4" height="32" rx="2" fill="#22d3ee"/>
   <text x="536" y="250" font-size="10" fill="#67e8f9" font-weight="bold">retrieve_index</text>
-  <text x="536" y="262" font-size="8" fill="#6e7681">Same walk, bodies withheld · costs shown</text>
+  <text x="536" y="262" font-size="8" fill="#6e7681">Same walk, bodies withheld</text>
 
   <rect x="520" y="274" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
   <rect x="520" y="274" width="4" height="32" rx="2" fill="#22d3ee"/>
   <text x="536" y="288" font-size="10" fill="#67e8f9" font-weight="bold">fetch_nodes</text>
-  <text x="536" y="300" font-size="8" fill="#6e7681">Only the bodies you picked · one call</text>
+  <text x="536" y="300" font-size="8" fill="#6e7681">Only the bodies you picked</text>
 
   <rect x="520" y="312" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
   <rect x="520" y="312" width="4" height="32" rx="2" fill="#10b981"/>
   <text x="536" y="326" font-size="10" fill="#6ee7b7" font-weight="bold">log_session</text>
-  <text x="536" y="338" font-size="8" fill="#6e7681">Writes a memory node · starts pending</text>
+  <text x="536" y="338" font-size="8" fill="#6e7681">Starts pending · outcome + turns</text>
 
   <rect x="520" y="350" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="350" width="4" height="32" rx="2" fill="#8b5cf6"/>
-  <text x="536" y="364" font-size="10" fill="#a78bfa" font-weight="bold">agents / tasks</text>
-  <text x="536" y="376" font-size="8" fill="#6e7681">Register or look up an identity or a scope</text>
+  <rect x="520" y="350" width="4" height="32" rx="2" fill="#f59e0b"/>
+  <text x="536" y="364" font-size="10" fill="#fcd34d" font-weight="bold">confirm_memory</text>
+  <text x="536" y="376" font-size="8" fill="#6e7681">Still true? Reports, never removes</text>
 
   <rect x="520" y="388" width="264" height="32" rx="6" fill="#1a0f10" stroke="#5f2020" stroke-width="1" stroke-dasharray="3 2"/>
   <rect x="520" y="388" width="4" height="32" rx="2" fill="#6b7280"/>
-  <text x="536" y="402" font-size="10" fill="#9ca3af" font-weight="bold">approve / reject / users</text>
-  <text x="536" y="414" font-size="8" fill="#6e7681">Admin-only — deliberately not a tool here</text>
+  <text x="536" y="402" font-size="10" fill="#9ca3af" font-weight="bold">agents / tasks · admin</text>
+  <text x="536" y="414" font-size="8" fill="#6e7681">Setup behind a flag · admin never</text>
 
-  <text x="652" y="438" text-anchor="middle" font-size="8" fill="#4b5563" letter-spacing="0.5">why: an agent shouldn't approve its own memory</text>
+  <text x="652" y="438" text-anchor="middle" font-size="8" fill="#4b5563" letter-spacing="0.5">~378 tokens of definitions, sent on every request</text>
 
   <!-- ─── CENTRE-LOWER: the hook, a second entry point ─────────── -->
   <g filter="url(#shadow)">
     <rect x="500" y="468" width="304" height="100" rx="12" fill="url(#hookCard)" stroke="#f59e0b" stroke-width="1.5" stroke-opacity="0.55"/>
   </g>
   <rect x="552" y="480" width="200" height="18" rx="9" fill="#78350f" fill-opacity="0.55"/>
-  <text x="652" y="493" text-anchor="middle" font-size="8" fill="#fcd34d" letter-spacing="0.8">LIFECYCLE HOOK · OUTSIDE THE LOOP</text>
-  <text x="652" y="518" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="bold">agenthive-log</text>
-  <text x="652" y="534" text-anchor="middle" font-size="9" fill="#fbbf24">a hook can't call an MCP tool</text>
-  <text x="652" y="550" text-anchor="middle" font-size="8" fill="#6e7681">Session ended unlogged? Records the gap, nothing more</text>
+  <text x="652" y="493" text-anchor="middle" font-size="8" fill="#fcd34d" letter-spacing="0.8">PLUGIN · CLAUDE CODE, VS CODE, CURSOR</text>
+  <text x="652" y="518" text-anchor="middle" font-size="13" fill="#e6edf3" font-weight="bold">agenthive-hook</text>
+  <text x="652" y="534" text-anchor="middle" font-size="9" fill="#fbbf24">facts in · tool usage out · loop guard</text>
+  <text x="652" y="550" text-anchor="middle" font-size="8" fill="#6e7681">Runs outside the agent loop · no model, ever</text>
 
   <!-- ─── RIGHT: outputs ────────────────────────────────────────── -->
   <line x1="806" y1="250" x2="870" y2="220" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.55" marker-end="url(#arrow)" stroke-dasharray="4 3"/>
