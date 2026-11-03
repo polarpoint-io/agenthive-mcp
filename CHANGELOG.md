@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.3.0...v1.4.0) (2026-11-03)
+
+
+### Features
+
+* **plugin:** add `agenthive install` so the plugin has a real install path ([f110e54](https://github.com/polarpoint-io/agenthive-mcp/commit/f110e5431bd4adff459a0f8abb829aa398b7e07f))
+
 # [1.3.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.2.0...v1.3.0) (2026-11-02)
 
 
