@@ -57,6 +57,18 @@ def test_the_host_can_be_forced_because_stop_is_ambiguous():
         del os.environ["AGENTHIVE_HOST"]
 
 
+def test_copilot_shares_the_claude_vscode_event_table():
+    """Copilot Chat runs inside VS Code and reads the same hook
+    surface - it is a name for AGENTHIVE_HOST, not a fifth format."""
+    os.environ["AGENTHIVE_HOST"] = "copilot"
+    try:
+        assert hooks.detect_host({}) == "copilot"
+        e = hooks.normalise({"hook_event_name": "SessionStart", "cwd": "/tmp"})
+        assert e["event"] == hooks.SESSION_START
+    finally:
+        del os.environ["AGENTHIVE_HOST"]
+
+
 def test_session_id_is_found_whatever_the_harness_calls_it():
     for key in ("session_id", "conversationId", "threadId"):
         assert hooks.normalise({key: "abc"})["session_id"] == "abc"
@@ -219,6 +231,14 @@ def test_an_unparseable_settings_file_is_left_alone(tmp_path):
 def test_an_unknown_harness_refuses_rather_than_guessing(tmp_path):
     ok, why = toolprune.apply("emacs", str(tmp_path), ["Browser"])
     assert not ok and "no settings target" in why
+
+
+def test_copilot_tool_pruning_writes_the_same_file_as_vscode(tmp_path):
+    """Copilot Chat is VS Code, not a fourth settings schema."""
+    ok, why = toolprune.apply("copilot", str(tmp_path), ["Browser"])
+    assert ok, why
+    data = json.loads((tmp_path / ".vscode/settings.json").read_text())
+    assert data["permissions"]["deny"] == ["Browser"]
 
 
 # --- loop guard ---------------------------------------------------------

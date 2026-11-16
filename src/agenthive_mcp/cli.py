@@ -34,7 +34,7 @@ def cmd_status(argv) -> int:
           f"(~{payload.get('approx_tokens', 0)} tokens injected per session)")
     print(f"  tool prune  {len(prune.get('prune') or [])} proposed, "
           f"{len(prune.get('not_yet') or [])} awaiting evidence")
-    for name in ("facts", "toolprune", "loopguard"):
+    for name in ("facts", "codemap", "toolprune", "loopguard"):
         flag = os.environ.get(f"AGENTHIVE_{name.upper()}", "on")
         print(f"  {name:<11} {flag}")
     return 0
@@ -208,7 +208,7 @@ def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor>\n"
-              "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]")
+              "  install [--harness claude|vscode|cursor|copilot] [--project DIR] [--dry-run] [--print]")
         return 0
     cmd = COMMANDS.get(argv[0])
     if not cmd:
