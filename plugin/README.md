@@ -46,10 +46,11 @@ wrong — and a wrong guess turns session-end into a silent no-op.
 | | What it does | Switch |
 |---|---|---|
 | **Facts** | Injects short team facts at session start, with no anchor and no tool call. The one path that replaces exploration rather than adding to context. | `AGENTHIVE_FACTS` |
+| **Codemap** | Injects a map of what this repo already has - functions/classes/exports per directory - at session start. No model call, nothing to review. | `AGENTHIVE_CODEMAP` |
 | **Tool pruning** | Tracks which loaded tools a session uses, pools it across the team, writes a deny list once several people agree. | `AGENTHIVE_TOOLPRUNE` |
 | **Loop guard** | Notices a turn repeating the same failure and adds one note suggesting another approach. | `AGENTHIVE_LOOPGUARD` |
 
-All three default on. Set any to `off`.
+All default on. Set any to `off`.
 
 ## What it will not do
 

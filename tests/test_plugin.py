@@ -17,7 +17,7 @@ import pytest
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 sys.path.insert(0, SRC)
 
-from agenthive_mcp import cli, facts, hooks, loopguard, plugin, toolprune
+from agenthive_mcp import cli, codemap, facts, hooks, loopguard, plugin, toolprune
 
 
 @pytest.fixture(autouse=True)
@@ -135,6 +135,54 @@ def test_uninteresting_commands_are_ignored(tmp_path):
     assert facts.observe_success(cwd, "ls /tmp") is None
 
 
+# --- codemap: what the repo itself already has --------------------------
+
+def test_the_map_lists_names_per_directory(tmp_path):
+    (tmp_path / "src" / "utils").mkdir(parents=True)
+    (tmp_path / "src" / "utils" / "strings.py").write_text(
+        "def slugify(text):\n    pass\n\nclass StringBuilder:\n    pass\n")
+    block = codemap.build(str(tmp_path))
+    assert "src/utils/: slugify, StringBuilder" in block
+    assert block.startswith("Codebase map")
+
+
+def test_shared_looking_directories_sort_first(tmp_path):
+    (tmp_path / "zzz_random").mkdir()
+    (tmp_path / "zzz_random" / "a.py").write_text("def thing():\n    pass\n")
+    (tmp_path / "utils").mkdir()
+    (tmp_path / "utils" / "b.py").write_text("def helper():\n    pass\n")
+    block = codemap.build(str(tmp_path))
+    assert block.index("utils/") < block.index("zzz_random/")
+
+
+def test_an_empty_or_unparsed_repo_yields_no_block(tmp_path):
+    (tmp_path / "README.md").write_text("# nothing to map")
+    assert codemap.build(str(tmp_path)) == ""
+
+
+def test_the_map_is_capped_to_its_budget(tmp_path):
+    for i in range(50):
+        d = tmp_path / f"pkg{i}"
+        d.mkdir()
+        (d / "mod.py").write_text(f"def fn{i}():\n    pass\n")
+    block = codemap.build(str(tmp_path), budget=100)
+    assert len(block) < 400  # budget plus the header/footer lines
+    assert "more folders not listed" in block
+
+
+def test_the_map_never_touches_test_or_vendor_files(tmp_path):
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "dep.js").write_text("export function Dep() {}\n")
+    (tmp_path / "test_things.py").write_text("def test_it():\n    pass\n")
+    assert codemap.build(str(tmp_path)) == ""
+
+
+def test_codemap_can_be_turned_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENTHIVE_CODEMAP", "off")
+    (tmp_path / "a.py").write_text("def fn():\n    pass\n")
+    assert plugin.on_session_start({"cwd": str(tmp_path), "payload": {}}) == ""
+
+
 # --- tool pruning -------------------------------------------------------
 
 def test_pruning_writes_only_into_the_harness_settings(tmp_path):
@@ -234,6 +282,7 @@ def test_a_broken_handler_cannot_break_the_session(monkeypatch):
 
 def test_mechanisms_can_be_turned_off(monkeypatch):
     monkeypatch.setenv("AGENTHIVE_FACTS", "off")
+    monkeypatch.setenv("AGENTHIVE_CODEMAP", "off")
     assert plugin.on_session_start({"cwd": "/tmp", "payload": {}}) == ""
 
 
