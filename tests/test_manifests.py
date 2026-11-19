@@ -38,6 +38,13 @@ def test_unknown_harness_is_an_error():
         manifests.destination("emacs")
 
 
+def test_copilot_shares_vscodes_destination(tmp_path):
+    """Copilot Chat runs inside VS Code and reads the same hook file -
+    this is not a fourth path, it is the same one under another name."""
+    assert (manifests.destination("copilot", str(tmp_path))
+            == manifests.destination("vscode", str(tmp_path)))
+
+
 def test_merge_into_empty_config_installs_everything():
     merged, changed = manifests.merge(None, "claude")
     assert merged == manifests.MANIFESTS["claude"]

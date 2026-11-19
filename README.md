@@ -10,7 +10,7 @@ A Model Context Protocol (MCP) server that exposes [AgentHive](https://github.co
 It ships in two halves, because they run in different places:
 
 - **The MCP server** — tools the *model* decides to call, inside its loop: `retrieve_context`, `retrieve_index`, `fetch_nodes`, `report_gaps`, `log_session`, `confirm_memory`.
-- **The plugin** — hooks the *harness* spawns, outside the loop, on Claude Code, VS Code and Cursor: fact injection, tool pruning, a loop guard, and a session-end backstop. A hook cannot call an MCP tool, which is why these are separate and why the plugin talks to the AgentHive API directly.
+- **The plugin** — hooks the *harness* spawns, outside the loop, on Claude Code, VS Code, Cursor and Copilot Chat: fact injection, a codebase map, tool pruning, a loop guard, and a session-end backstop. A hook cannot call an MCP tool, which is why these are separate and why the plugin talks to the AgentHive API directly.
 
 Install both; neither needs the other to work:
 
@@ -306,9 +306,9 @@ Team-specific conventions (which tags to use, the team's `AGENTHIVE_TEAM_ID`) be
 Repos without that template yet can use a plain `CLAUDE.md` / `.cursor/rules` line instead - same content, just a different file.
 
 
-## The plugin (Claude Code, VS Code, Cursor)
+## The plugin (Claude Code, VS Code, Cursor, Copilot Chat)
 
-The MCP server can only act when the model chooses to call it. Four
+The MCP server can only act when the model chooses to call it. Five
 things worth doing cannot wait for that choice, so they run as harness
 hooks instead - one implementation in `src/agenthive_mcp/hooks.py`,
 three thin manifests under
@@ -317,6 +317,7 @@ three thin manifests under
 | | What it does | Switch |
 |---|---|---|
 | **Facts** | Injects short team facts at session start, with no anchor and no tool call. The one path that *replaces* exploration instead of adding to context - which is the only way memory reduces a token bill rather than growing it. | `AGENTHIVE_FACTS` |
+| **Codemap** | Injects a map of what this repo already has - top-level functions/classes/exports per directory - at session start. `git ls-files` plus a regex per language: no model call, nothing to review, cannot be stale in a way that matters. The local half of "reuse it"; facts are the team's reviewed half. | `AGENTHIVE_CODEMAP` |
 | **Tool pruning** | Records which of the loaded tools a session actually used, pools that across the team, and writes a deny list once several people agree. | `AGENTHIVE_TOOLPRUNE` |
 | **Loop guard** | Notices a turn repeating the same failure and adds one note suggesting a different approach. Local, no model. | `AGENTHIVE_LOOPGUARD` |
 | **Session backstop** | Records that a session ended unlogged. Described in full below. | always on |
@@ -327,7 +328,7 @@ All default on; set any to `off`.
 
 ```sh
 pip install agenthive-mcp
-agenthive install --harness claude     # or: vscode, cursor
+agenthive install --harness claude     # or: vscode, cursor, copilot
 ```
 
 That is the whole install. `--harness` defaults to `$AGENTHIVE_HOST`, so
@@ -362,6 +363,7 @@ agenthive uninstall --harness claude
 | Claude Code | `~/.claude/settings.json` | per user |
 | VS Code | `<project>/.github/hooks/agenthive.json` | **per project** - `--project DIR` to pick one, otherwise the current directory |
 | Cursor | `~/.cursor/hooks.json` | per user |
+| Copilot Chat | `<project>/.github/hooks/agenthive.json` | **per project**, same file as VS Code - Copilot Chat runs inside VS Code and reads its hook surface, not a format of its own |
 
 The manifests themselves are in
 [`plugin/`](https://github.com/polarpoint-io/agenthive-mcp/tree/main/plugin)

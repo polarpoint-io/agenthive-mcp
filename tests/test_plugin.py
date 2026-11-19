@@ -17,7 +17,7 @@ import pytest
 SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 sys.path.insert(0, SRC)
 
-from agenthive_mcp import cli, facts, hooks, loopguard, plugin, toolprune
+from agenthive_mcp import cli, codemap, facts, hooks, loopguard, plugin, toolprune
 
 
 @pytest.fixture(autouse=True)
@@ -53,6 +53,18 @@ def test_the_host_can_be_forced_because_stop_is_ambiguous():
     os.environ["AGENTHIVE_HOST"] = "cursor"
     try:
         assert hooks.detect_host({"hook_event_name": "stop"}) == "cursor"
+    finally:
+        del os.environ["AGENTHIVE_HOST"]
+
+
+def test_copilot_shares_the_claude_vscode_event_table():
+    """Copilot Chat runs inside VS Code and reads the same hook
+    surface - it is a name for AGENTHIVE_HOST, not a fifth format."""
+    os.environ["AGENTHIVE_HOST"] = "copilot"
+    try:
+        assert hooks.detect_host({}) == "copilot"
+        e = hooks.normalise({"hook_event_name": "SessionStart", "cwd": "/tmp"})
+        assert e["event"] == hooks.SESSION_START
     finally:
         del os.environ["AGENTHIVE_HOST"]
 
@@ -135,6 +147,118 @@ def test_uninteresting_commands_are_ignored(tmp_path):
     assert facts.observe_success(cwd, "ls /tmp") is None
 
 
+# --- codemap: what the repo itself already has --------------------------
+
+def test_the_map_lists_names_per_directory(tmp_path):
+    (tmp_path / "src" / "utils").mkdir(parents=True)
+    (tmp_path / "src" / "utils" / "strings.py").write_text(
+        "def slugify(text):\n    pass\n\nclass StringBuilder:\n    pass\n")
+    block = codemap.build(str(tmp_path))
+    assert "src/utils/: slugify, StringBuilder" in block
+    assert block.startswith("Codebase map")
+
+
+def test_shared_looking_directories_sort_first(tmp_path):
+    (tmp_path / "zzz_random").mkdir()
+    (tmp_path / "zzz_random" / "a.py").write_text("def thing():\n    pass\n")
+    (tmp_path / "utils").mkdir()
+    (tmp_path / "utils" / "b.py").write_text("def helper():\n    pass\n")
+    block = codemap.build(str(tmp_path))
+    assert block.index("utils/") < block.index("zzz_random/")
+
+
+def test_an_empty_or_unparsed_repo_yields_no_block(tmp_path):
+    (tmp_path / "README.md").write_text("# nothing to map")
+    assert codemap.build(str(tmp_path)) == ""
+
+
+def test_the_map_is_capped_to_its_budget(tmp_path):
+    for i in range(50):
+        d = tmp_path / f"pkg{i}"
+        d.mkdir()
+        (d / "mod.py").write_text(f"def fn{i}():\n    pass\n")
+    block = codemap.build(str(tmp_path), budget=100)
+    assert len(block) < 400  # budget plus the header/footer lines
+    assert "more folders not listed" in block
+
+
+def test_the_map_never_touches_test_or_vendor_files(tmp_path):
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "dep.js").write_text("export function Dep() {}\n")
+    (tmp_path / "test_things.py").write_text("def test_it():\n    pass\n")
+    assert codemap.build(str(tmp_path)) == ""
+
+
+def test_sorting_happens_before_the_file_cap_not_after(tmp_path, monkeypatch):
+    """A shared-looking file that sorts alphabetically LAST must still
+    survive MAX_FILES - capping the candidate list before sorting it by
+    shared-first would drop exactly the files that sort is meant to
+    prioritize, whenever there are more eligible files than the cap."""
+    monkeypatch.setattr(codemap, "MAX_FILES", 2)
+    (tmp_path / "aaa_one.py").write_text("def one():\n    pass\n")
+    (tmp_path / "aaa_two.py").write_text("def two():\n    pass\n")
+    (tmp_path / "zzz_utils.py").write_text("def helper():\n    pass\n")
+
+    block = codemap.build(str(tmp_path))
+    assert "helper" in block
+
+
+def test_a_symlinked_file_is_never_read(tmp_path):
+    """is_file() follows symlinks - without an explicit check, a tracked
+    symlink pointing anywhere on disk would have its contents read and
+    injected into model context by this default-on, every-session-start
+    hook."""
+    outside = tmp_path.parent / "outside_the_repo.py"
+    outside.write_text("def should_never_appear():\n    pass\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "linked.py").symlink_to(outside)
+
+    block = codemap.build(str(repo))
+    assert "should_never_appear" not in block
+
+
+def test_a_large_file_is_still_handled_without_reading_it_whole(tmp_path):
+    """Guards the switch to a bounded read: a file far past the 65536
+    budget should still map correctly from its first names, not crash or
+    silently yield nothing."""
+    big = "def early_name():\n    pass\n" + ("# padding\n" * 200_000)
+    (tmp_path / "big.py").write_text(big)
+    block = codemap.build(str(tmp_path))
+    assert "early_name" in block
+
+
+def test_codemap_can_be_turned_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENTHIVE_CODEMAP", "off")
+    (tmp_path / "a.py").write_text("def fn():\n    pass\n")
+    assert plugin.on_session_start({"cwd": str(tmp_path), "payload": {}}) == ""
+
+
+def test_a_facts_failure_does_not_suppress_the_codemap_block(monkeypatch, tmp_path):
+    (tmp_path / "a.py").write_text("def thing():\n    pass\n")
+
+    def _boom(*a, **k):
+        raise RuntimeError("AgentHive unreachable")
+
+    monkeypatch.setattr(facts, "fetch", _boom)
+    block = plugin.on_session_start({"cwd": str(tmp_path), "payload": {}})
+    assert "thing" in block
+
+
+def test_a_codemap_failure_does_not_suppress_already_rendered_facts(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts, "fetch", lambda cwd="": {"facts": [
+        {"body": "env-fact: tests run with pytest -q", "confirmations": 3,
+         "contradictions": 0, "tags": ["env-fact"]},
+    ]})
+
+    def _boom(*a, **k):
+        raise RuntimeError("codemap blew up")
+
+    monkeypatch.setattr(codemap, "build", _boom)
+    block = plugin.on_session_start({"cwd": str(tmp_path), "payload": {}})
+    assert "pytest -q" in block
+
+
 # --- tool pruning -------------------------------------------------------
 
 def test_pruning_writes_only_into_the_harness_settings(tmp_path):
@@ -171,6 +295,14 @@ def test_an_unparseable_settings_file_is_left_alone(tmp_path):
 def test_an_unknown_harness_refuses_rather_than_guessing(tmp_path):
     ok, why = toolprune.apply("emacs", str(tmp_path), ["Browser"])
     assert not ok and "no settings target" in why
+
+
+def test_copilot_tool_pruning_writes_the_same_file_as_vscode(tmp_path):
+    """Copilot Chat is VS Code, not a fourth settings schema."""
+    ok, why = toolprune.apply("copilot", str(tmp_path), ["Browser"])
+    assert ok, why
+    data = json.loads((tmp_path / ".vscode/settings.json").read_text())
+    assert data["permissions"]["deny"] == ["Browser"]
 
 
 # --- loop guard ---------------------------------------------------------
@@ -234,6 +366,7 @@ def test_a_broken_handler_cannot_break_the_session(monkeypatch):
 
 def test_mechanisms_can_be_turned_off(monkeypatch):
     monkeypatch.setenv("AGENTHIVE_FACTS", "off")
+    monkeypatch.setenv("AGENTHIVE_CODEMAP", "off")
     assert plugin.on_session_start({"cwd": "/tmp", "payload": {}}) == ""
 
 
