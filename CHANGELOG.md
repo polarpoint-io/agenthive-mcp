@@ -1,3 +1,17 @@
+# [1.5.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.4.0...v1.5.0) (2026-11-19)
+
+
+### Bug Fixes
+
+* **codemap:** address PR review findings ([c84b606](https://github.com/polarpoint-io/agenthive-mcp/commit/c84b606ee01bd98851515205f41901375c5cf443))
+
+
+### Features
+
+* Codebase map hook + Copilot Chat as a fourth harness ([42b2be8](https://github.com/polarpoint-io/agenthive-mcp/commit/42b2be8a042c8b3195a75283c265adf498c7ea61))
+* **plugin:** inject a local codebase map alongside team facts ([5552050](https://github.com/polarpoint-io/agenthive-mcp/commit/55520506b739cad328ffce2544d8241dcce9dbf3))
+* **plugin:** wire up Copilot Chat as a fourth installable harness ([3c9f721](https://github.com/polarpoint-io/agenthive-mcp/commit/3c9f72191e7651b247204bb8ed02a4ca1c816a21))
+
 # [1.4.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.3.0...v1.4.0) (2026-11-03)
 
 
