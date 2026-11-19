@@ -189,10 +189,74 @@ def test_the_map_never_touches_test_or_vendor_files(tmp_path):
     assert codemap.build(str(tmp_path)) == ""
 
 
+def test_sorting_happens_before_the_file_cap_not_after(tmp_path, monkeypatch):
+    """A shared-looking file that sorts alphabetically LAST must still
+    survive MAX_FILES - capping the candidate list before sorting it by
+    shared-first would drop exactly the files that sort is meant to
+    prioritize, whenever there are more eligible files than the cap."""
+    monkeypatch.setattr(codemap, "MAX_FILES", 2)
+    (tmp_path / "aaa_one.py").write_text("def one():\n    pass\n")
+    (tmp_path / "aaa_two.py").write_text("def two():\n    pass\n")
+    (tmp_path / "zzz_utils.py").write_text("def helper():\n    pass\n")
+
+    block = codemap.build(str(tmp_path))
+    assert "helper" in block
+
+
+def test_a_symlinked_file_is_never_read(tmp_path):
+    """is_file() follows symlinks - without an explicit check, a tracked
+    symlink pointing anywhere on disk would have its contents read and
+    injected into model context by this default-on, every-session-start
+    hook."""
+    outside = tmp_path.parent / "outside_the_repo.py"
+    outside.write_text("def should_never_appear():\n    pass\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "linked.py").symlink_to(outside)
+
+    block = codemap.build(str(repo))
+    assert "should_never_appear" not in block
+
+
+def test_a_large_file_is_still_handled_without_reading_it_whole(tmp_path):
+    """Guards the switch to a bounded read: a file far past the 65536
+    budget should still map correctly from its first names, not crash or
+    silently yield nothing."""
+    big = "def early_name():\n    pass\n" + ("# padding\n" * 200_000)
+    (tmp_path / "big.py").write_text(big)
+    block = codemap.build(str(tmp_path))
+    assert "early_name" in block
+
+
 def test_codemap_can_be_turned_off(monkeypatch, tmp_path):
     monkeypatch.setenv("AGENTHIVE_CODEMAP", "off")
     (tmp_path / "a.py").write_text("def fn():\n    pass\n")
     assert plugin.on_session_start({"cwd": str(tmp_path), "payload": {}}) == ""
+
+
+def test_a_facts_failure_does_not_suppress_the_codemap_block(monkeypatch, tmp_path):
+    (tmp_path / "a.py").write_text("def thing():\n    pass\n")
+
+    def _boom(*a, **k):
+        raise RuntimeError("AgentHive unreachable")
+
+    monkeypatch.setattr(facts, "fetch", _boom)
+    block = plugin.on_session_start({"cwd": str(tmp_path), "payload": {}})
+    assert "thing" in block
+
+
+def test_a_codemap_failure_does_not_suppress_already_rendered_facts(monkeypatch, tmp_path):
+    monkeypatch.setattr(facts, "fetch", lambda cwd="": {"facts": [
+        {"body": "env-fact: tests run with pytest -q", "confirmations": 3,
+         "contradictions": 0, "tags": ["env-fact"]},
+    ]})
+
+    def _boom(*a, **k):
+        raise RuntimeError("codemap blew up")
+
+    monkeypatch.setattr(codemap, "build", _boom)
+    block = plugin.on_session_start({"cwd": str(tmp_path), "payload": {}})
+    assert "pytest -q" in block
 
 
 # --- tool pruning -------------------------------------------------------

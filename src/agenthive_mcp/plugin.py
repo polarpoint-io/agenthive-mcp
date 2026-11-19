@@ -38,12 +38,20 @@ def on_session_start(event: dict) -> str:
     produce."""
     blocks = []
     if _enabled("facts"):
-        fact_block = facts.render(facts.fetch(event["cwd"]))
+        # Each mechanism wrapped on its own, per the module docstring: a
+        # timeout or bad JSON reaching AgentHive must not also cost the
+        # codemap block below (or vice versa) - this used to run both
+        # under one outer hooks.safely() in main(), so either one
+        # raising discarded whatever the other had already produced.
+        def _fetch_facts():
+            return facts.render(facts.fetch(event["cwd"]))
+
+        fact_block = hooks.safely(_fetch_facts)
         if fact_block:
             hooks.note(f"injected {len(fact_block) // 4} tokens of team facts")
             blocks.append(fact_block)
     if _enabled("codemap"):
-        map_block = codemap.build(event["cwd"])
+        map_block = hooks.safely(codemap.build, event["cwd"])
         if map_block:
             hooks.note(f"injected {len(map_block) // 4} tokens of codebase map")
             blocks.append(map_block)

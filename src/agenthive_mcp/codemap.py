@@ -114,16 +114,30 @@ def build(root: str = "", budget: int = MAX_MAP_CHARS) -> str:
     files = [f for f in _list_files(root)
              if _SAFE_PATH.match(f) and _SRC.search(f)
              and not _SKIP_DIR.search(f) and not _SKIP_FILE.search(f)]
-    files = files[:MAX_FILES]
+    # Sort BEFORE capping: with more eligible files than MAX_FILES, capping
+    # first would truncate the candidate list in whatever order _list_files
+    # happened to return it, which can drop shared-looking dirs entirely
+    # before they ever get the priority this sort exists to give them.
     files.sort(key=lambda f: (not _SHARED.search(f), f))
+    files = files[:MAX_FILES]
 
     dirs: dict[str, list[list[str]]] = {}
     for f in files:
         path = pathlib.Path(root) / f
         try:
-            if not path.is_file():
+            # is_file() follows symlinks - without this check, a tracked
+            # symlink can point anywhere on disk and this default-on,
+            # every-session-start hook would read it and inject its
+            # contents into model context. Checked before is_file() so a
+            # symlink is never opened at all, whatever it points to.
+            if path.is_symlink() or not path.is_file():
                 continue
-            text = path.read_text(encoding="utf-8", errors="ignore")[:65536]
+            # Bound the READ itself, not just the string after it - a
+            # large generated file that slips past the exclusions should
+            # cost at most one bounded read, not a full load into memory
+            # before the slice ever runs.
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                text = fh.read(65536)
         except OSError:
             continue
         names = _names_in(f, text)
