@@ -29,10 +29,13 @@ def fake_server():
 
 
 @pytest.fixture()
-def env(fake_server, monkeypatch):
+def env(fake_server, monkeypatch, tmp_path):
     monkeypatch.setenv("AGENTHIVE_URL", fake_server.base_url)
     monkeypatch.setenv("AGENTHIVE_TOKEN", TOKEN)
     monkeypatch.setenv("AGENTHIVE_TEAM_ID", TEAM_ID)
+    # Isolate the local dedup state (shared with hooklog.py's state_dir())
+    # from the real machine's state and from other tests.
+    monkeypatch.setenv("AGENTHIVE_HOOK_STATE_DIR", str(tmp_path / "state"))
     return fake_server
 
 
@@ -178,3 +181,82 @@ def test_no_importable_sections_is_not_an_error(tmp_path, env, capsys):
     assert rc == 0
     assert "no importable sections" in capsys.readouterr().out
     assert env.nodes == {}
+
+
+# ---- local dedup: safe to re-run, including unreviewed ----------------
+
+def test_a_second_apply_skips_what_the_first_already_submitted(tmp_path, env, capsys):
+    write(tmp_path, "runbook.md", "## Deploying\n" + "steps go here " * 5)
+
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+    assert len(env.nodes) == 1
+
+    rc = cli.main(["import-docs", str(tmp_path), "--apply"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert len(env.nodes) == 1  # not 2 - nothing new was created
+    assert "nothing new to import" in out
+    assert "1 already submitted" in out
+
+
+def test_skip_holds_even_though_the_first_nodes_are_still_pending(tmp_path, env):
+    write(tmp_path, "runbook.md", "## Deploying\n" + "steps go here " * 5)
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+    (node,) = env.nodes.values()
+    assert node["status"] == "pending"  # nobody reviewed it
+
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+    assert len(env.nodes) == 1  # still skipped - dedup doesn't wait for approval
+
+
+def test_editing_a_section_resubmits_it_despite_the_unchanged_title(tmp_path, env):
+    write(tmp_path, "runbook.md", "## Deploying\n" + "old steps " * 5)
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+
+    write(tmp_path, "runbook.md", "## Deploying\n" + "new steps, revised " * 5)
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+
+    assert len(env.nodes) == 2
+    bodies = {n["body"] for n in env.nodes.values()}
+    assert any("new steps" in b for b in bodies)
+
+
+def test_force_resubmits_even_an_unchanged_already_submitted_section(tmp_path, env):
+    write(tmp_path, "runbook.md", "## Deploying\n" + "steps go here " * 5)
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+    cli.main(["import-docs", str(tmp_path), "--force", "--apply"])
+    assert len(env.nodes) == 2
+
+
+def test_dry_run_reports_how_many_were_already_submitted(tmp_path, env, capsys):
+    write(tmp_path, "runbook.md", "## Deploying\n" + "steps go here " * 5)
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+    capsys.readouterr()
+
+    rc = cli.main(["import-docs", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0 node(s) would be created" in out
+    assert "1 already submitted by an earlier run" in out
+
+
+def test_a_failed_post_is_not_marked_submitted_so_it_can_retry(tmp_path, env):
+    write(tmp_path, "runbook.md", "## Deploying\n" + "steps go here " * 5)
+
+    from agenthive_mcp.client import AgentHiveError
+
+    original_request = cli._request
+
+    def _boom(*a, **k):
+        raise AgentHiveError("500: simulated outage")
+
+    cli._request = _boom
+    try:
+        cli.main(["import-docs", str(tmp_path), "--apply"])
+    finally:
+        cli._request = original_request
+
+    # Real client restored; the earlier failure must not have been marked
+    # as submitted, so this retry actually creates the node.
+    cli.main(["import-docs", str(tmp_path), "--apply"])
+    assert len(env.nodes) == 1

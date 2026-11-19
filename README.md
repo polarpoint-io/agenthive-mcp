@@ -607,17 +607,29 @@ nothing:
 Nothing written - re-run with --apply.
 ```
 
-Add `--apply` once the plan looks right. Nothing is deduplicated here on
-purpose: AgentHive's own `create_memory` already rejects an exact
-title+body repeat against an *approved* node, so re-running this after a
-docs edit, or after the first run's nodes get approved, does not pile up
-duplicates - it only queues the sections that actually changed.
+Add `--apply` once the plan looks right. It's safe to re-run - including
+before anyone's reviewed the last batch, which is the case AgentHive's
+own dedup doesn't cover: `create_memory` only rejects an exact
+title+body repeat against an *approved* node, so without its own check
+this command would resubmit the exact same pending section every run
+until someone reviews it. A local marker (same state directory
+`agenthive-log`'s hook already uses) remembers what's been submitted
+regardless of review status, so a second run only queues sections that
+are new or actually changed - which is what makes this safe to put on a
+schedule rather than something to run by hand every time:
+
+```
+0 node(s) would be created, tagged doc-import, each PENDING until an admin reviews it.
+3 already submitted by an earlier run - skipped (would still skip under --apply; --force to include them anyway).
+Nothing written - re-run with --apply.
+```
 
 | Flag | Default | Description |
 |---|---|---|
 | `--tag TAG` | (repeatable) | Extra tag alongside the automatic `doc-import` one. |
 | `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
-| `--limit N` | unlimited | Cap how many nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
+| `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
+| `--force` | off | Resubmit sections already submitted by an earlier run, reviewed or not. |
 | `--apply` | off (dry run) | Actually write the nodes. Without it, nothing reaches AgentHive. |
 
 ## What is deliberately not a tool here

@@ -19,21 +19,35 @@ What this module does NOT do:
   mode AgentHive's review gate exists to be the human-in-the-loop check
   on, so turning that queue flood into two separate steps (see the plan,
   then actually write it) is load-bearing, not a nicety.
-- De-duplicate. AgentHive's own ``create_memory`` already rejects an
-  exact title+body repeat against an *approved* node
-  (``find_approved_duplicate`` in agenthive's db.py); running this twice
-  on an unchanged file does not pile up duplicate pending nodes once the
-  first run's nodes are approved. Nothing here needs to re-implement
-  that.
 - Chunk by length. Chunking is by heading, not by character budget - see
   ``split_sections``.
+
+WHY THIS MODULE HAS ITS OWN DEDUP, ON TOP OF AGENTHIVE'S
+----------------------------------------------------------
+AgentHive's own ``create_memory`` already rejects an exact title+body
+repeat against an *approved* node (``find_approved_duplicate`` in its
+db.py). That is not enough on its own: it checks approved nodes only, so
+a section still sitting in the pending queue is invisible to it, and
+running import-docs again before anyone reviews yesterday's batch would
+submit the same section as a second, indistinguishable pending node -
+every run, for as long as review lags behind the schedule. That is the
+one thing standing between "safe to run by hand occasionally" and "safe
+to put on a cron" (see cli.py's --apply for the actual write loop), so
+``already_submitted``/``mark_submitted`` below close it: once a given
+(team, title, body) has been submitted, re-running without ``--force``
+skips it, independent of whether it has been reviewed yet. Change the
+body and the fingerprint changes with it, so an edited section is
+submitted again on its own.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from .hooklog import state_dir as _state_dir
 
 #: Directories never worth walking into: VCS metadata, dependency trees,
 #: and virtualenvs do not hold anything a team would want surfaced as
@@ -137,3 +151,43 @@ def plan(root: str, min_chars: int = 40) -> list[Section]:
     for file_path in discover_markdown_files(root):
         sections.extend(sections_for_file(file_path, root_path, min_chars))
     return sections
+
+
+# ---------------------------------------------------------------------------
+# Local dedup: has THIS (team, title, body) already been submitted?
+#
+# Reuses hooklog.py's state_dir() - same AGENTHIVE_HOOK_STATE_DIR /
+# XDG_STATE_HOME base the agenthive-log hook already uses - under a
+# different filename prefix ("imported-" vs hooklog's "logged-"/"sent-")
+# so the two never collide. Nothing here is about session hooks; it just
+# saves spinning up a second env var and a second "where does state
+# live" decision for the same install.
+# ---------------------------------------------------------------------------
+
+def _fingerprint(team_scope: str, section: Section) -> str:
+    raw = f"{team_scope}\x00{section.title}\x00{section.body}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
+
+
+def _marker_path(team_scope: str, section: Section) -> Path:
+    return _state_dir() / ("imported-" + _fingerprint(team_scope, section))
+
+
+def already_submitted(team_scope: str, section: Section) -> bool:
+    """True if this exact (team, title, body) was already written by a
+    previous ``--apply``, approved or not. ``team_scope`` is the caller's
+    own key (e.g. ``f"{base_url}|{team_id}"``) - this module does not
+    know how to reach AgentHive itself, so it takes that as given rather
+    than calling ``client.get_config()`` on its own."""
+    try:
+        return _marker_path(team_scope, section).exists()
+    except OSError:
+        return False  # state unavailable is "not known to be a repeat"
+
+
+def mark_submitted(team_scope: str, section: Section) -> None:
+    """Record that this (team, title, body) was just submitted."""
+    try:
+        _marker_path(team_scope, section).write_text("1")
+    except OSError:
+        pass  # never let bookkeeping break a successful write

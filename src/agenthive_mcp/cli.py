@@ -102,18 +102,27 @@ def cmd_import_docs(argv) -> int:
     docimport.py's docstring), and the review queue is the thing a bulk
     import can genuinely flood. `--apply` is the one flag that actually
     writes anything.
+
+    Safe to re-run, including on a schedule: a (team, title, body)
+    already submitted by a previous --apply is skipped even if nobody
+    has reviewed it yet (see docimport.py's "WHY THIS MODULE HAS ITS
+    OWN DEDUP" for why AgentHive's own approved-only dedup isn't enough
+    on its own). `--force` bypasses that local check for one run.
     """
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive import-docs PATH [--tag TAG]... [--min-chars N] "
-              "[--limit N] [--apply]\n"
+              "[--limit N] [--force] [--apply]\n"
               "  Without --apply: prints the nodes this would create and "
-              "writes nothing.")
+              "writes nothing.\n"
+              "  --force: also (re-)submit sections already submitted by "
+              "an earlier run.")
         return 0
 
     path = argv[0]
     rest = argv[1:]
     apply = "--apply" in rest
-    rest = [a for a in rest if a != "--apply"]
+    force = "--force" in rest
+    rest = [a for a in rest if a not in ("--apply", "--force")]
 
     tags = ["doc-import"]
     while "--tag" in rest:
@@ -147,30 +156,58 @@ def cmd_import_docs(argv) -> int:
         return 1
 
     sections = docimport.plan(path, min_chars=min_chars)
-    if limit is not None:
-        sections = sections[:limit]
-
     if not sections:
         print(f"no importable sections found under {path} "
               f"(nothing ≥ {min_chars} chars)")
         return 0
 
+    # Config is what lets us compute team_scope and so check the local
+    # dedup state at all - optional for a dry run (it just can't show
+    # what's already been submitted), required for --apply.
+    team_scope = None
+    config_error = None
+    try:
+        base_url, _, team_id = get_config()
+        team_scope = f"{base_url}|{team_id}"
+    except AgentHiveConfigError as e:
+        config_error = e
+
+    if team_scope and not force:
+        new_sections = [s for s in sections if not docimport.already_submitted(team_scope, s)]
+        skipped = len(sections) - len(new_sections)
+    else:
+        new_sections = sections
+        skipped = 0
+
+    if limit is not None:
+        new_sections = new_sections[:limit]
+
     if not apply:
-        for s in sections:
+        for s in new_sections:
             print(f"  {len(s.body):>6} chars  {s.title}")
-        print(f"\n{len(sections)} node(s) would be created, tagged "
+        print(f"\n{len(new_sections)} node(s) would be created, tagged "
               f"{', '.join(tags)}, each PENDING until an admin reviews it.")
+        if skipped:
+            print(f"{skipped} already submitted by an earlier run - "
+                  "skipped (would still skip under --apply; --force to "
+                  "include them anyway).")
+        if team_scope is None:
+            print("(set AGENTHIVE_URL/AGENTHIVE_TOKEN/AGENTHIVE_TEAM_ID to "
+                  "also see what's already been submitted)")
         print("Nothing written - re-run with --apply.")
         return 0
 
-    try:
-        _, _, team_id = get_config()
-    except AgentHiveConfigError as e:
-        print(f"not configured: {e}")
+    if config_error:
+        print(f"not configured: {config_error}")
         return 1
 
+    if not new_sections:
+        print(f"nothing new to import under {path} - "
+              f"{skipped} already submitted. --force to resubmit anyway.")
+        return 0
+
     created, failed = 0, 0
-    for s in sections:
+    for s in new_sections:
         try:
             _request(
                 "POST", f"/teams/{team_id}/memory",
@@ -178,13 +215,17 @@ def cmd_import_docs(argv) -> int:
                       "links": [s.source]},
             )
             created += 1
+            docimport.mark_submitted(team_scope, s)
             print(f"  pending  {s.title}")
         except AgentHiveError as e:
+            # Not marked as submitted - a failed POST should be retried
+            # by the next run, not silently skipped forever.
             failed += 1
             print(f"  FAILED   {s.title}: {e}")
 
     print(f"\n{created} node(s) logged as pending" +
           (f", {failed} failed" if failed else "") +
+          (f", {skipped} already submitted" if skipped else "") +
           " - review them in AgentHive before they reach anyone's "
           "retrieve_context.")
     return 1 if failed else 0
