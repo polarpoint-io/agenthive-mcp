@@ -154,6 +154,8 @@ def discover_markdown_files(root: str, exclude: list[str] | None = None) -> list
     for dirpath, dirnames, filenames in os.walk(root_path):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
         for name in filenames:
+            if name.startswith("."):
+                continue
             if not name.lower().endswith((".md", ".markdown")):
                 continue
             file_path = Path(dirpath) / name
@@ -196,6 +198,8 @@ def changed_markdown_files(root: str, since: str, exclude: list[str] | None = No
     found: list[Path] = []
     for line in done.stdout.splitlines():
         rel = line.strip()
+        if os.path.basename(rel).startswith("."):
+            continue
         if not rel.lower().endswith((".md", ".markdown")):
             continue
         if _is_excluded(rel, patterns):
@@ -280,11 +284,18 @@ def split_sections(text: str, heading_prefix: str) -> list[tuple[str, str]]:
     Content before the first heading is kept under ``heading_prefix``
     itself (the file's own title) rather than dropped - a short doc
     with no internal headings still becomes exactly one node.
+
+    A fenced code block (``` ```` ``` `` or ``~~~``) is never scanned for
+    headings inside it: a shell comment like ``# Restart service`` would
+    otherwise read as an ATX heading and split the procedure it's part
+    of into two sections, right where keeping it in one node matters
+    most - a runbook's command block.
     """
     lines = text.splitlines()
     sections: list[tuple[str, str]] = []
     current_heading = heading_prefix
     current_lines: list[str] = []
+    in_fence = False
 
     def _flush() -> None:
         body = "\n".join(current_lines).strip()
@@ -293,7 +304,11 @@ def split_sections(text: str, heading_prefix: str) -> list[tuple[str, str]]:
 
     for line in lines:
         stripped = line.lstrip()
-        if stripped.startswith("#"):
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            current_lines.append(line)
+            continue
+        if not in_fence and stripped.startswith("#"):
             level_chars = len(stripped) - len(stripped.lstrip("#"))
             rest = stripped[level_chars:].strip()
             if rest:

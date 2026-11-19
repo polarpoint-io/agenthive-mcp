@@ -129,11 +129,23 @@ def cmd_import_docs(argv) -> int:
     can only approximate). Every imported node carries its file's
     frontmatter tags regardless, so they reach AgentHive as real tags
     whether or not you ever filter on them.
+
+    `--limit` caps how many *new* nodes one run creates, to fill the
+    review queue in batches rather than flooding it - but by itself it
+    always re-slices the same leading N of whatever's left, which only
+    advances to the next batch because local dedup state marks the
+    previous batch as already-submitted on a persistent machine. That
+    tracking does NOT survive an ephemeral CI runner (see --since
+    above) and isn't shared across people running this from different
+    machines, so in either case `--limit` alone would reselect the
+    same first batch forever. `--offset N` advances explicitly instead,
+    needing no state of its own: skip the first N of what's left, then
+    take the next `--limit`.
     """
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
-              "[--only-tag TAG]... [--since REF] [--min-chars N] [--limit N] "
-              "[--force] [--apply]\n"
+              "[--only-tag TAG]... [--since REF] [--min-chars N] [--offset N] "
+              "[--limit N] [--force] [--apply]\n"
               "  PATH: a local directory, or a git URL to clone for this run.\n"
               "  --exclude: skip files whose path matches this glob, e.g. "
               "'docs/blog/*' (repeatable).\n"
@@ -141,6 +153,8 @@ def cmd_import_docs(argv) -> int:
               "include this (repeatable, OR'd together).\n"
               "  --since: only markdown changed since this git ref "
               "(the CI-safe mode - see --help text above).\n"
+              "  --offset: skip this many of what's left before applying "
+              "--limit - the stateless way to advance to the next batch.\n"
               "  Without --apply: prints the nodes this would create and "
               "writes nothing.\n"
               "  --force: also (re-)submit sections already submitted by "
@@ -196,6 +210,23 @@ def cmd_import_docs(argv) -> int:
             limit = int(rest[i + 1])
         except (IndexError, ValueError):
             raise SystemExit("--limit needs an integer") from None
+        if limit < 0:
+            # A negative value is a valid Python slice endpoint (counts
+            # from the end), so new_sections[:limit] would silently keep
+            # all-but-the-last-N instead of rejecting the batch size -
+            # exactly the queue-flooding case --limit exists to prevent.
+            raise SystemExit("--limit must be 0 or a positive integer")
+        del rest[i:i + 2]
+
+    offset = 0
+    if "--offset" in rest:
+        i = rest.index("--offset")
+        try:
+            offset = int(rest[i + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--offset needs an integer") from None
+        if offset < 0:
+            raise SystemExit("--offset must be 0 or a positive integer")
         del rest[i:i + 2]
 
     since = None
@@ -246,6 +277,8 @@ def cmd_import_docs(argv) -> int:
         new_sections = sections
         skipped = 0
 
+    if offset:
+        new_sections = new_sections[offset:]
     if limit is not None:
         new_sections = new_sections[:limit]
 
@@ -255,7 +288,10 @@ def cmd_import_docs(argv) -> int:
             print(f"  {len(s.body):>6} chars  {s.title}{extra}")
         print(f"\n{len(new_sections)} node(s) would be created, tagged "
               f"{', '.join(tags)} plus each file's own frontmatter tags "
-              "(shown above), each PENDING until an admin reviews it.")
+              "(shown above). Each normally starts PENDING until an admin "
+              "reviews it, unless your AgentHive's own auto-approve/"
+              "auto-reject rules decide it outright - that's server policy, "
+              "not something this dry run can predict.")
         if skipped:
             print(f"{skipped} already submitted by an earlier run - "
                   "skipped (would still skip under --apply; --force to "
@@ -275,29 +311,37 @@ def cmd_import_docs(argv) -> int:
               f"{skipped} already submitted. --force to resubmit anyway.")
         return 0
 
-    created, failed = 0, 0
+    by_status: dict[str, int] = {}
+    failed = 0
     for s in new_sections:
         try:
             node_tags = sorted({*tags, *s.tags})  # + the file's own frontmatter tags
-            _request(
+            result = _request(
                 "POST", f"/teams/{team_id}/memory",
                 body={"title": s.title, "body": s.body, "tags": node_tags,
                       "links": [s.source]},
             )
-            created += 1
+            # AgentHive's own auto-approve/auto-reject rules can resolve
+            # a node on the spot - "pending" is the common case, not a
+            # guarantee, so report what the server actually decided
+            # rather than assuming every create sat down in the queue.
+            status = result.get("status") or "pending"
+            by_status[status] = by_status.get(status, 0) + 1
             docimport.mark_submitted(team_scope, s)
-            print(f"  pending  {s.title}")
+            print(f"  {status:<9}{s.title}")
         except AgentHiveError as e:
             # Not marked as submitted - a failed POST should be retried
             # by the next run, not silently skipped forever.
             failed += 1
             print(f"  FAILED   {s.title}: {e}")
 
-    print(f"\n{created} node(s) logged as pending" +
+    created = sum(by_status.values())
+    breakdown = ", ".join(f"{n} {status}" for status, n in sorted(by_status.items()))
+    print(f"\n{created} node(s) logged" + (f" ({breakdown})" if breakdown else "") +
           (f", {failed} failed" if failed else "") +
           (f", {skipped} already submitted" if skipped else "") +
-          " - review them in AgentHive before they reach anyone's "
-          "retrieve_context.")
+          " - a pending one needs an admin's review before it reaches "
+          "anyone's retrieve_context; an approved one already has.")
     return 1 if failed else 0
 
 
@@ -418,8 +462,8 @@ def main(argv=None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor|import-docs>\n"
               "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]\n"
-              "  import-docs PATH [--tag TAG]... [--exclude PATTERN]... [--since REF] "
-              "[--min-chars N] [--limit N] [--force] [--apply]")
+              "  import-docs PATH [--tag TAG]... [--exclude PATTERN]... [--only-tag TAG]... "
+              "[--since REF] [--min-chars N] [--offset N] [--limit N] [--force] [--apply]")
         return 0
     cmd = COMMANDS.get(argv[0])
     if not cmd:

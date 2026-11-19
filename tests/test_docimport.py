@@ -69,6 +69,28 @@ def test_a_bare_heading_with_nothing_under_it_is_dropped():
     assert sections == [("Has content", "actual text")]
 
 
+def test_a_shell_comment_inside_a_fenced_block_is_not_a_heading():
+    text = (
+        "## Restart the service\n"
+        "Run this on the host:\n"
+        "```bash\n"
+        "# Restart service\n"
+        "systemctl restart agentd\n"
+        "```\n"
+        "Then confirm it came back up.\n"
+    )
+    sections = docimport.split_sections(text, heading_prefix="runbook.md")
+    assert [h for h, _ in sections] == ["Restart the service"]
+    assert "systemctl restart agentd" in sections[0][1]
+    assert "Then confirm it came back up." in sections[0][1]
+
+
+def test_a_tilde_fence_is_also_respected():
+    text = "## Title\n~~~\n# not a heading\n~~~\nreal body text here\n"
+    sections = docimport.split_sections(text, heading_prefix="x.md")
+    assert [h for h, _ in sections] == ["Title"]
+
+
 # ---- discover_markdown_files -----------------------------------------
 
 def test_finds_markdown_at_any_depth(tmp_path):
@@ -90,6 +112,29 @@ def test_skips_vcs_and_dependency_directories(tmp_path):
 
     found = docimport.discover_markdown_files(str(tmp_path))
     assert [p.name for p in found] == ["README.md"]
+
+
+def test_skips_hidden_markdown_files_not_just_hidden_directories(tmp_path):
+    write(tmp_path, "README.md", "keep me")
+    write(tmp_path, ".private.md", "should not be walked at all")
+    write(tmp_path, "docs/.draft.md", "same, nested")
+
+    found = docimport.discover_markdown_files(str(tmp_path))
+    assert [p.name for p in found] == ["README.md"]
+
+
+def test_changed_markdown_files_also_skips_hidden_names(tmp_path):
+    _init_git_repo(tmp_path)
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "baseline")
+    before = _git_rev(tmp_path)
+
+    write(tmp_path, "new.md", "## New\n" + "content " * 5)
+    write(tmp_path, ".hidden.md", "## Hidden\n" + "content " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add files")
+
+    changed = docimport.changed_markdown_files(str(tmp_path), before)
+    assert [p.name for p in changed] == ["new.md"]
 
 
 def test_exclude_glob_matches_across_slashes_without_double_star(tmp_path):
@@ -444,7 +489,7 @@ def test_apply_logs_each_section_as_a_pending_node(tmp_path, env, capsys):
         assert node["status"] == "pending"
         assert "doc-import" in node["tags"]
         assert node["links"] == ["runbook.md"]
-    assert "2 node(s) logged as pending" in out
+    assert "2 node(s) logged (2 pending)" in out
 
 
 def test_apply_without_config_fails_before_writing_anything(tmp_path, monkeypatch, capsys):
@@ -470,6 +515,50 @@ def test_limit_caps_how_many_nodes_one_run_creates(tmp_path, env):
     write(tmp_path, "c.md", "## Three\n" + "x" * 50)
     cli.main(["import-docs", str(tmp_path), "--limit", "2", "--apply"])
     assert len(env.nodes) == 2
+
+
+def test_negative_limit_is_rejected_rather_than_silently_misread(tmp_path, env):
+    write(tmp_path, "a.md", "## One\n" + "x" * 50)
+    with pytest.raises(SystemExit):
+        cli.main(["import-docs", str(tmp_path), "--limit", "-1", "--apply"])
+    assert env.nodes == {}  # nothing should have been sent before the rejection
+
+
+def test_negative_offset_is_rejected(tmp_path, env):
+    write(tmp_path, "a.md", "## One\n" + "x" * 50)
+    with pytest.raises(SystemExit):
+        cli.main(["import-docs", str(tmp_path), "--offset", "-1", "--apply"])
+    assert env.nodes == {}
+
+
+def test_offset_advances_to_the_next_batch_without_relying_on_local_state(tmp_path, env):
+    write(tmp_path, "a.md", "## One\n" + "x" * 50)
+    write(tmp_path, "b.md", "## Two\n" + "x" * 50)
+    write(tmp_path, "c.md", "## Three\n" + "x" * 50)
+
+    # First batch, with --force so dedup state plays no part in this -
+    # --offset has to do the advancing on its own.
+    cli.main(["import-docs", str(tmp_path), "--limit", "2", "--force", "--apply"])
+    first_batch = {n["title"] for n in env.nodes.values()}
+    assert len(first_batch) == 2
+
+    cli.main(["import-docs", str(tmp_path), "--offset", "2", "--limit", "2",
+              "--force", "--apply"])
+    all_titles = {n["title"] for n in env.nodes.values()}
+    assert all_titles == {"a.md — One", "b.md — Two", "c.md — Three"}
+
+
+def test_apply_reports_the_servers_actual_status_not_always_pending(tmp_path, env, capsys):
+    env.create_status = "approved"  # simulates an AgentHive auto-approve rule
+    write(tmp_path, "a.md", "## One\n" + "x" * 50)
+    rc = cli.main(["import-docs", str(tmp_path), "--apply"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    (node,) = env.nodes.values()
+    assert node["status"] == "approved"
+    assert "approved" in out
+    assert "1 node(s) logged (1 approved)" in out
 
 
 def test_exclude_keeps_a_scoped_apply_from_touching_the_excluded_files(tmp_path, env):

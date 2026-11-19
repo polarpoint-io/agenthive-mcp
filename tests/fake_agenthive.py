@@ -24,6 +24,13 @@ class FakeAgentHive:
         self.token = token
         self.team_id = team_id
         self.nodes = {}
+        # Set by a test to simulate AgentHive's own server-side auto-approve
+        # /auto-reject policy on create_memory - the real endpoint can
+        # return "approved" or "rejected" on the very first response, not
+        # just "pending" (see db.py's create_memory precedence order).
+        # None (the default) keeps every create "pending", matching this
+        # fake's previous, policy-free behaviour.
+        self.create_status = None
         # Pre-seeded by tests; the real endpoint derives these from the
         # retrieval_misses table, which this fake does not model.
         self.gaps = []
@@ -68,7 +75,7 @@ class FakeAgentHive:
                         "links": body.get("links", []),
                         "agent_id": body.get("agent_id"),
                         "task_id": body.get("task_id"),
-                        "status": "pending",
+                        "status": server.create_status or "pending",
                     }
                     self._send_json(200, dict(server.nodes[node_id]))
                     return

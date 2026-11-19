@@ -652,7 +652,7 @@ nothing:
     412 chars  docs/deploy.md — Blue/green cutover  [runbook]
      94 chars  docs/oncall.md — Paging thresholds  [runbook, kb]
 
-3 node(s) would be created, tagged doc-import plus each file's own frontmatter tags (shown above), each PENDING until an admin reviews it.
+3 node(s) would be created, tagged doc-import plus each file's own frontmatter tags (shown above). Each normally starts PENDING until an admin reviews it, unless your AgentHive's own auto-approve/auto-reject rules decide it outright - that's server policy, not something this dry run can predict.
 Nothing written - re-run with --apply.
 ```
 
@@ -667,9 +667,35 @@ regardless of review status, so a second run on the SAME machine only
 queues sections that are new or actually changed:
 
 ```
-0 node(s) would be created, tagged doc-import, each PENDING until an admin reviews it.
+0 node(s) would be created, tagged doc-import, each normally PENDING until an admin reviews it (unless server policy resolves it outright).
 3 already submitted by an earlier run - skipped (would still skip under --apply; --force to include them anyway).
 Nothing written - re-run with --apply.
+```
+
+Each node's actual outcome - `pending`, or `approved`/`rejected` if your
+AgentHive has auto-approve or auto-reject rules configured - is only
+known once `--apply` actually posts it; the summary line breaks the
+count down by what the server returned, not an assumption:
+
+```
+  pending  docs/oncall.md — Paging thresholds
+  approved docs/deploy.md — Rolling back
+
+2 node(s) logged (1 approved, 1 pending) - a pending one needs an admin's review before it reaches anyone's retrieve_context; an approved one already has.
+```
+
+**Batching without relying on local state.** `--limit` by itself always
+re-slices the same leading N of whatever's left; it only advances to
+the next batch because the local dedup marker excludes the previous
+batch on a persistent machine. That marker does not survive an
+ephemeral CI runner and isn't shared across people running this from
+different machines - in either case, `--limit` alone would reselect
+the same first batch forever. `--offset N` advances explicitly
+instead: skip the first N of what's left, then take the next
+`--limit`, no state required.
+
+```bash
+agenthive import-docs . --offset 50 --limit 50 --apply   # the next batch after the first 50
 ```
 
 | Flag | Default | Description |
@@ -679,6 +705,7 @@ Nothing written - re-run with --apply.
 | `--only-tag TAG` | (repeatable) | Skip files whose frontmatter `tags:` don't include this (OR'd together). See "Scope it" above. |
 | `--since REF` | off (whole tree) | Only files git shows changed since this ref. See "Running it automatically" below. |
 | `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
+| `--offset N` | `0` | Skip this many of what's left before applying `--limit` - the stateless way to advance to the next batch. |
 | `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
 | `--force` | off | Resubmit sections already submitted by an earlier run, reviewed or not. |
 | `--apply` | off (dry run) | Actually write the nodes. Without it, nothing reaches AgentHive. |
