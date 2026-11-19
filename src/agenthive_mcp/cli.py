@@ -11,8 +11,9 @@ import json
 import os
 import sys
 
-from . import facts, manifests, toolprune
-from .client import AgentHiveConfigError, get_config
+from . import docimport, facts, manifests, toolprune
+from .client import AgentHiveConfigError, AgentHiveError, get_config
+from .client import request as _request
 
 
 def _host() -> str:
@@ -91,6 +92,102 @@ def cmd_doctor(argv) -> int:
     payload = facts.fetch(os.getcwd())
     print(f"  server          reachable, {len(payload.get('facts') or [])} facts")
     return 0
+
+
+def cmd_import_docs(argv) -> int:
+    """Turn a repo of markdown docs into AgentHive memory nodes.
+
+    Dry run by default - this is a command a human runs once or
+    occasionally, not something an agent decides to do mid-session (see
+    docimport.py's docstring), and the review queue is the thing a bulk
+    import can genuinely flood. `--apply` is the one flag that actually
+    writes anything.
+    """
+    if not argv or argv[0] in ("-h", "--help"):
+        print("agenthive import-docs PATH [--tag TAG]... [--min-chars N] "
+              "[--limit N] [--apply]\n"
+              "  Without --apply: prints the nodes this would create and "
+              "writes nothing.")
+        return 0
+
+    path = argv[0]
+    rest = argv[1:]
+    apply = "--apply" in rest
+    rest = [a for a in rest if a != "--apply"]
+
+    tags = ["doc-import"]
+    while "--tag" in rest:
+        i = rest.index("--tag")
+        try:
+            tags.append(rest[i + 1])
+        except IndexError:
+            raise SystemExit("--tag needs a value") from None
+        del rest[i:i + 2]
+
+    min_chars = 40
+    if "--min-chars" in rest:
+        i = rest.index("--min-chars")
+        try:
+            min_chars = int(rest[i + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--min-chars needs an integer") from None
+        del rest[i:i + 2]
+
+    limit = None
+    if "--limit" in rest:
+        i = rest.index("--limit")
+        try:
+            limit = int(rest[i + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--limit needs an integer") from None
+        del rest[i:i + 2]
+
+    if not os.path.isdir(path):
+        print(f"not a directory: {path}")
+        return 1
+
+    sections = docimport.plan(path, min_chars=min_chars)
+    if limit is not None:
+        sections = sections[:limit]
+
+    if not sections:
+        print(f"no importable sections found under {path} "
+              f"(nothing ≥ {min_chars} chars)")
+        return 0
+
+    if not apply:
+        for s in sections:
+            print(f"  {len(s.body):>6} chars  {s.title}")
+        print(f"\n{len(sections)} node(s) would be created, tagged "
+              f"{', '.join(tags)}, each PENDING until an admin reviews it.")
+        print("Nothing written - re-run with --apply.")
+        return 0
+
+    try:
+        _, _, team_id = get_config()
+    except AgentHiveConfigError as e:
+        print(f"not configured: {e}")
+        return 1
+
+    created, failed = 0, 0
+    for s in sections:
+        try:
+            _request(
+                "POST", f"/teams/{team_id}/memory",
+                body={"title": s.title, "body": s.body, "tags": tags,
+                      "links": [s.source]},
+            )
+            created += 1
+            print(f"  pending  {s.title}")
+        except AgentHiveError as e:
+            failed += 1
+            print(f"  FAILED   {s.title}: {e}")
+
+    print(f"\n{created} node(s) logged as pending" +
+          (f", {failed} failed" if failed else "") +
+          " - review them in AgentHive before they reach anyone's "
+          "retrieve_context.")
+    return 1 if failed else 0
 
 
 def cmd_install(argv) -> int:
@@ -201,14 +298,16 @@ def _read_json(path):
 
 COMMANDS = {"status": cmd_status, "facts": cmd_facts,
             "toolprune": cmd_toolprune, "doctor": cmd_doctor,
-            "install": cmd_install, "uninstall": cmd_uninstall}
+            "install": cmd_install, "uninstall": cmd_uninstall,
+            "import-docs": cmd_import_docs}
 
 
 def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
-        print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor>\n"
-              "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]")
+        print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor|import-docs>\n"
+              "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]\n"
+              "  import-docs PATH [--tag TAG]... [--min-chars N] [--limit N] [--apply]")
         return 0
     cmd = COMMANDS.get(argv[0])
     if not cmd:

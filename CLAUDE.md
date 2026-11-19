@@ -10,7 +10,10 @@
 |---|---|
 | `src/agenthive_mcp/server.py` | All MCP tools (FastMCP) + entrypoint |
 | `src/agenthive_mcp/client.py` | AgentHive HTTP client (env-driven, lazy) |
+| `src/agenthive_mcp/cli.py` | `agenthive` terminal command (install/uninstall/status/import-docs/...) |
+| `src/agenthive_mcp/docimport.py` | Markdown-repo-to-memory-nodes logic behind `agenthive import-docs` |
 | `tests/test_tools.py` | Real-stdio-subprocess integration tests |
+| `tests/test_docimport.py` | Unit tests for docimport.py and the import-docs CLI command |
 | `tests/fake_agenthive.py` | Small local fake of AgentHive's HTTP API |
 | `pyproject.toml` | Build config and dependencies |
 | `Dockerfile` | Container image |

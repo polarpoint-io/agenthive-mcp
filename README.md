@@ -573,6 +573,53 @@ trade is right for them.
 | `AGENTHIVE_HOOK_STATE_DIR` | `$XDG_STATE_HOME/agenthive` | Where the dedupe and "already logged" markers live. |
 
 
+## Backfilling memory from existing docs (`import-docs`)
+
+A new team usually already has a pile of markdown lying around -
+runbooks, READMEs, incident postmortems - that `log_session` will never
+retroactively capture because no agent session wrote it. `import-docs`
+turns a directory of it into the same pending nodes a session's
+`log_session` call would:
+
+```bash
+agenthive import-docs ./docs
+```
+
+One node per heading-delimited section (not per file - a 400-line
+runbook becomes one node per procedure, the same unit AgentHive's
+`hub_cutoff`/index-then-fetch retrieval already assumes a node is), each
+tagged `doc-import` and linked back to its source file.
+
+This is a terminal command, not an MCP tool an agent can call - see
+"What is deliberately not a tool here" below for why a bulk action like
+this stays a human's decision rather than something a session triggers
+on its own.
+
+It defaults to a dry run - prints what it would create and writes
+nothing:
+
+```
+    187 chars  docs/deploy.md — Rolling back
+    412 chars  docs/deploy.md — Blue/green cutover
+     94 chars  docs/oncall.md — Paging thresholds
+
+3 node(s) would be created, tagged doc-import, each PENDING until an admin reviews it.
+Nothing written - re-run with --apply.
+```
+
+Add `--apply` once the plan looks right. Nothing is deduplicated here on
+purpose: AgentHive's own `create_memory` already rejects an exact
+title+body repeat against an *approved* node, so re-running this after a
+docs edit, or after the first run's nodes get approved, does not pile up
+duplicates - it only queues the sections that actually changed.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tag TAG` | (repeatable) | Extra tag alongside the automatic `doc-import` one. |
+| `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
+| `--limit N` | unlimited | Cap how many nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
+| `--apply` | off (dry run) | Actually write the nodes. Without it, nothing reaches AgentHive. |
+
 ## What is deliberately not a tool here
 
 AgentHive's memory-processing layer raises four kinds of proposal from
