@@ -628,15 +628,31 @@ relative to the root you gave; its `*` already matches across `/`, so
 `docs/blog/*` excludes everything under `docs/blog` at any depth - no
 `**` needed. Repeatable.
 
+If the repo already classifies its own docs - mkdocs' own frontmatter
+`tags:` key is common, and often carries exactly the distinction you
+want (`runbook`, `kb`, `adr`) - `--only-tag` uses that instead of
+guessing at paths:
+
+```bash
+agenthive import-docs . --only-tag runbook --only-tag kb
+```
+
+OR'd together like AgentHive's own `tags` filter: a file needs only one
+of them. Every imported node keeps its file's frontmatter tags either
+way (alongside `doc-import` and anything from `--tag`), so they reach
+AgentHive as real, filterable tags on the node - `retrieve_context(...,
+tags=["runbook"])` works on them afterward, not just `import-docs`
+itself.
+
 It defaults to a dry run - prints what it would create and writes
 nothing:
 
 ```
-    187 chars  docs/deploy.md — Rolling back
-    412 chars  docs/deploy.md — Blue/green cutover
-     94 chars  docs/oncall.md — Paging thresholds
+    187 chars  docs/deploy.md — Rolling back  [runbook]
+    412 chars  docs/deploy.md — Blue/green cutover  [runbook]
+     94 chars  docs/oncall.md — Paging thresholds  [runbook, kb]
 
-3 node(s) would be created, tagged doc-import, each PENDING until an admin reviews it.
+3 node(s) would be created, tagged doc-import plus each file's own frontmatter tags (shown above), each PENDING until an admin reviews it.
 Nothing written - re-run with --apply.
 ```
 
@@ -660,6 +676,7 @@ Nothing written - re-run with --apply.
 |---|---|---|
 | `--tag TAG` | (repeatable) | Extra tag alongside the automatic `doc-import` one. |
 | `--exclude PATTERN` | (repeatable) | Skip files whose path matches this glob (e.g. `docs/blog/*`). See "Scope it" above. |
+| `--only-tag TAG` | (repeatable) | Skip files whose frontmatter `tags:` don't include this (OR'd together). See "Scope it" above. |
 | `--since REF` | off (whole tree) | Only files git shows changed since this ref. See "Running it automatically" below. |
 | `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
 | `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |

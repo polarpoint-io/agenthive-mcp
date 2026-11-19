@@ -122,13 +122,23 @@ def cmd_import_docs(argv) -> int:
     `--since`, the clone fetches full history (REF has to actually be
     in it to diff against); without it, a shallow depth-1 clone, since
     a whole-tree plan only needs the current snapshot.
+
+    `--only-tag` scopes to files whose own frontmatter `tags:` include
+    at least one of these (a docs site's mkdocs tags - `runbook`, `kb`,
+    `adr` - are often the real classification `--exclude`'s path globs
+    can only approximate). Every imported node carries its file's
+    frontmatter tags regardless, so they reach AgentHive as real tags
+    whether or not you ever filter on them.
     """
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
-              "[--since REF] [--min-chars N] [--limit N] [--force] [--apply]\n"
+              "[--only-tag TAG]... [--since REF] [--min-chars N] [--limit N] "
+              "[--force] [--apply]\n"
               "  PATH: a local directory, or a git URL to clone for this run.\n"
               "  --exclude: skip files whose path matches this glob, e.g. "
               "'docs/blog/*' (repeatable).\n"
+              "  --only-tag: skip files whose frontmatter `tags:` don't "
+              "include this (repeatable, OR'd together).\n"
               "  --since: only markdown changed since this git ref "
               "(the CI-safe mode - see --help text above).\n"
               "  Without --apply: prints the nodes this would create and "
@@ -159,6 +169,15 @@ def cmd_import_docs(argv) -> int:
             exclude.append(rest[i + 1])
         except IndexError:
             raise SystemExit("--exclude needs a value") from None
+        del rest[i:i + 2]
+
+    only_tags = []
+    while "--only-tag" in rest:
+        i = rest.index("--only-tag")
+        try:
+            only_tags.append(rest[i + 1])
+        except IndexError:
+            raise SystemExit("--only-tag needs a value") from None
         del rest[i:i + 2]
 
     min_chars = 40
@@ -195,7 +214,10 @@ def cmd_import_docs(argv) -> int:
 
     try:
         with docimport.checkout(path, shallow=since is None) as root:
-            sections = docimport.plan(root, min_chars=min_chars, exclude=exclude, since=since)
+            sections = docimport.plan(
+                root, min_chars=min_chars, exclude=exclude, since=since,
+                only_tags=only_tags or None,
+            )
     except RuntimeError as e:
         print(str(e))
         return 1
@@ -229,9 +251,11 @@ def cmd_import_docs(argv) -> int:
 
     if not apply:
         for s in new_sections:
-            print(f"  {len(s.body):>6} chars  {s.title}")
+            extra = f"  [{', '.join(s.tags)}]" if s.tags else ""
+            print(f"  {len(s.body):>6} chars  {s.title}{extra}")
         print(f"\n{len(new_sections)} node(s) would be created, tagged "
-              f"{', '.join(tags)}, each PENDING until an admin reviews it.")
+              f"{', '.join(tags)} plus each file's own frontmatter tags "
+              "(shown above), each PENDING until an admin reviews it.")
         if skipped:
             print(f"{skipped} already submitted by an earlier run - "
                   "skipped (would still skip under --apply; --force to "
@@ -254,9 +278,10 @@ def cmd_import_docs(argv) -> int:
     created, failed = 0, 0
     for s in new_sections:
         try:
+            node_tags = sorted({*tags, *s.tags})  # + the file's own frontmatter tags
             _request(
                 "POST", f"/teams/{team_id}/memory",
-                body={"title": s.title, "body": s.body, "tags": tags,
+                body={"title": s.title, "body": s.body, "tags": node_tags,
                       "links": [s.source]},
             )
             created += 1

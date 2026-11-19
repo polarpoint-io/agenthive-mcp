@@ -213,6 +213,72 @@ def test_cli_since_only_creates_nodes_for_what_actually_changed(tmp_path, env):
     assert node["links"] == ["new.md"]
 
 
+# ---- frontmatter tags / --only-tag --------------------------------------
+
+def test_split_frontmatter_reads_an_inline_tag_list():
+    text = "---\ntitle: KB\ntags: [runbook, kb]\n---\n## Body\ncontent\n"
+    tags, body = docimport._split_frontmatter(text)
+    assert tags == ["runbook", "kb"]
+    assert "---" not in body
+    assert "## Body" in body
+
+
+def test_split_frontmatter_reads_a_bullet_tag_list():
+    text = "---\ntags:\n  - runbook\n  - oncall\ndraft: false\n---\n## Body\ncontent\n"
+    tags, body = docimport._split_frontmatter(text)
+    assert tags == ["runbook", "oncall"]
+    assert "draft" not in body
+
+
+def test_split_frontmatter_with_no_tags_key_is_empty():
+    text = "---\ntitle: KB\n---\n## Body\ncontent\n"
+    tags, body = docimport._split_frontmatter(text)
+    assert tags == []
+    assert "## Body" in body
+
+
+def test_split_frontmatter_with_no_frontmatter_returns_text_unchanged():
+    text = "## Body\ncontent\n"
+    tags, body = docimport._split_frontmatter(text)
+    assert tags == []
+    assert body == text
+
+
+def test_sections_for_file_carries_frontmatter_tags(tmp_path):
+    path = write(tmp_path, "kb.md", "---\ntags: [runbook, kb]\n---\n## Steps\n" + "do this thing " * 5)
+    sections = docimport.sections_for_file(path, tmp_path, min_chars=10)
+    assert sections[0].tags == ["runbook", "kb"]
+
+
+def test_only_tag_keeps_files_matching_any_of_the_requested_tags(tmp_path):
+    write(tmp_path, "runbook.md", "---\ntags: [runbook]\n---\n## Steps\n" + "do this thing " * 5)
+    write(tmp_path, "blog.md", "---\ntags: [marketing]\n---\n## Post\n" + "marketing fluff " * 5)
+    write(tmp_path, "untagged.md", "## Notes\n" + "no frontmatter at all " * 5)
+
+    sections = docimport.plan(str(tmp_path), only_tags=["runbook"])
+    assert [s.source for s in sections] == ["runbook.md"]
+
+
+def test_without_only_tag_untagged_and_tagged_files_both_import(tmp_path):
+    write(tmp_path, "runbook.md", "---\ntags: [runbook]\n---\n## Steps\n" + "do this thing " * 5)
+    write(tmp_path, "untagged.md", "## Notes\n" + "no frontmatter at all " * 5)
+
+    sections = docimport.plan(str(tmp_path))
+    assert {s.source for s in sections} == {"runbook.md", "untagged.md"}
+
+
+def test_cli_only_tag_sends_frontmatter_tags_on_the_created_node(tmp_path, env):
+    write(tmp_path, "runbook.md", "---\ntags: [runbook, kb]\n---\n## Steps\n" + "do this thing " * 5)
+    write(tmp_path, "blog.md", "---\ntags: [marketing]\n---\n## Post\n" + "marketing fluff " * 5)
+
+    cli.main(["import-docs", str(tmp_path), "--only-tag", "runbook", "--apply"])
+
+    assert len(env.nodes) == 1
+    (node,) = env.nodes.values()
+    assert node["links"] == ["runbook.md"]
+    assert set(node["tags"]) == {"doc-import", "runbook", "kb"}
+
+
 # ---- checkout() / remote repos -----------------------------------------
 
 def test_looks_like_remote_matches_common_git_url_shapes():

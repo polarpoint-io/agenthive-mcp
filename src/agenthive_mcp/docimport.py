@@ -50,10 +50,11 @@ import contextlib
 import fnmatch
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .hooklog import state_dir as _state_dir
@@ -210,6 +211,58 @@ class Section:
     title: str
     body: str
     source: str  # path relative to root, for the node's `links`
+    tags: list[str] = field(default_factory=list)  # from the file's own frontmatter
+
+
+def _split_frontmatter(text: str) -> tuple[list[str], str]:
+    """(tags, body) - the file's own ``tags:`` frontmatter, and the text
+    with that leading ``---``/``---`` block removed so it never leaks
+    into a section's body as unreadable YAML.
+
+    Hand-parsed rather than pulled in through a YAML dependency: the only
+    shape worth supporting is the one mkdocs itself writes (a leading
+    frontmatter block, a ``tags:`` key, as either an inline list -
+    ``tags: [a, b]`` - or a bullet list under it) - and that is exactly
+    where a real docs tree's own classification (``runbook``, ``adr``,
+    ``kb``, ...) already lives, confirmed against markdown-pol-docs
+    itself rather than assumed. No frontmatter, or no ``tags:`` key,
+    is ``([], text)`` unchanged."""
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return [], text
+    end = None
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end = i
+            break
+    if end is None:
+        return [], text  # unterminated "---" isn't frontmatter, leave it alone
+
+    frontmatter = lines[1:end]
+    body = "".join(lines[end + 1:])
+
+    tags: list[str] = []
+    in_tags = False
+    for line in frontmatter:
+        if not in_tags:
+            m = re.match(r"^tags:\s*(.*?)\s*$", line)
+            if not m:
+                continue
+            rest = m.group(1)
+            if rest.startswith("[") and rest.endswith("]"):
+                tags = [t.strip().strip("'\"") for t in rest[1:-1].split(",") if t.strip()]
+                break
+            if rest:
+                tags = [rest.strip("'\"")]
+                break
+            in_tags = True  # bullet list follows on the next lines
+            continue
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            tags.append(stripped[2:].strip().strip("'\""))
+        elif stripped:
+            break  # dedented back out of the tags block
+    return tags, body
 
 
 def split_sections(text: str, heading_prefix: str) -> list[tuple[str, str]]:
@@ -253,22 +306,37 @@ def split_sections(text: str, heading_prefix: str) -> list[tuple[str, str]]:
     return sections
 
 
-def sections_for_file(path: Path, root: Path, min_chars: int) -> list[Section]:
+def sections_for_file(
+    path: Path,
+    root: Path,
+    min_chars: int,
+    only_tags: list[str] | None = None,
+) -> list[Section]:
     """The candidate nodes for one file: one per heading-delimited
     section, dropping anything under ``min_chars`` (a one-line "See
     also" or a stray heading with nothing under it is not worth a
-    review-queue entry)."""
+    review-queue entry).
+
+    ``only_tags`` scopes by the file's own frontmatter ``tags:`` (OR
+    semantics, same as AgentHive's own ``tags`` filter) - a file with
+    none of them is skipped whole, since frontmatter describes the
+    document, not a section of it. Every section still carries the
+    file's frontmatter tags either way, so they reach AgentHive as real
+    ``tags`` on the node, not just a local scoping knob."""
     rel = path.relative_to(root).as_posix()
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
+        return []
+    file_tags, text = _split_frontmatter(text)
+    if only_tags and not (set(file_tags) & set(only_tags)):
         return []
     out = []
     for heading, body in split_sections(text, heading_prefix=rel):
         if len(body) < min_chars:
             continue
         title = rel if heading == rel else f"{rel} — {heading}"
-        out.append(Section(title=title, body=body, source=rel))
+        out.append(Section(title=title, body=body, source=rel, tags=file_tags))
     return out
 
 
@@ -277,6 +345,7 @@ def plan(
     min_chars: int = 40,
     exclude: list[str] | None = None,
     since: str | None = None,
+    only_tags: list[str] | None = None,
 ) -> list[Section]:
     """Every candidate node this import would create.
 
@@ -284,6 +353,9 @@ def plan(
     ``exclude`` - the whole-tree backfill. With ``since``: only files
     git shows as changed between that ref and HEAD - see
     ``changed_markdown_files`` for why that is the shape a CI run needs.
+    ``only_tags`` additionally drops any file whose own frontmatter
+    ``tags:`` don't include at least one of these - see
+    ``sections_for_file``.
 
     Pure filesystem (and, with ``since``, git) read - no network call,
     so a caller can show this to a human before anything is written
@@ -295,7 +367,7 @@ def plan(
         files = discover_markdown_files(root, exclude=exclude)
     sections: list[Section] = []
     for file_path in files:
-        sections.extend(sections_for_file(file_path, root_path, min_chars))
+        sections.extend(sections_for_file(file_path, root_path, min_chars, only_tags=only_tags))
     return sections
 
 
