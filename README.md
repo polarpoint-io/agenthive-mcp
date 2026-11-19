@@ -590,6 +590,19 @@ runbook becomes one node per procedure, the same unit AgentHive's
 `hub_cutoff`/index-then-fetch retrieval already assumes a node is), each
 tagged `doc-import` and linked back to its source file.
 
+The path doesn't have to be a local checkout - a git URL works too
+(`https://`, `ssh://`, `git@host:path`, or anything ending `.git`),
+and is cloned to a throwaway temp directory for the run and removed
+afterward:
+
+```bash
+agenthive import-docs https://github.com/polarpoint-io/markdown-pol-docs --exclude 'docs/blog/*'
+```
+
+Useful for running this from somewhere that doesn't already have the
+target repo checked out - a scheduled job on a bastion host, say -
+without a separate clone step of your own to maintain.
+
 This is a terminal command, not an MCP tool an agent can call - see
 "What is deliberately not a tool here" below for why a bulk action like
 this stays a human's decision rather than something a session triggers

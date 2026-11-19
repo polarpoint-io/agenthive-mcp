@@ -21,6 +21,10 @@ What this module does NOT do:
   then actually write it) is load-bearing, not a nicety.
 - Chunk by length. Chunking is by heading, not by character budget - see
   ``split_sections``.
+- Require a local clone. ``checkout()`` below accepts a git URL directly
+  and clones it to a throwaway temp directory for the run - useful for a
+  CI job or anyone scripting this without first checking out the repo
+  it's pointed at.
 
 WHY THIS MODULE HAS ITS OWN DEDUP, ON TOP OF AGENTHIVE'S
 ----------------------------------------------------------
@@ -42,10 +46,13 @@ submitted again on its own.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,6 +71,62 @@ _SKIP_DIRS = {
 
 def _is_excluded(rel_posix: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(rel_posix, pattern) for pattern in patterns)
+
+
+def looks_like_remote(path_or_url: str) -> bool:
+    """True for a git URL this module should clone rather than read as a
+    local directory - the common schemes (https, ssh, git@host:path,
+    file://) plus a bare ``.git`` suffix, which covers an https URL
+    whose scheme got trimmed off some config somewhere."""
+    return (
+        path_or_url.startswith(("http://", "https://", "git://", "ssh://", "git@", "file://"))
+        or path_or_url.endswith(".git")
+    )
+
+
+@contextlib.contextmanager
+def checkout(path_or_url: str, *, shallow: bool = True):
+    """Yield a local directory to read ``path_or_url`` from.
+
+    A plain filesystem path is yielded as-is - this is a no-op for the
+    common case, so every existing caller keeps working unchanged. A git
+    URL is cloned into a fresh temporary directory, which is removed when
+    the ``with`` block exits either way (success or error) - a clone is
+    scratch space for this one run, never something to leave behind.
+
+    ``shallow`` controls clone depth, and callers should set it from
+    whether ``since`` is in play: a whole-tree plan only needs the
+    current snapshot (``--depth 1``, fast, and the common case - a repo
+    full import-docs runs against is often not one git hosts a small
+    history of), but ``changed_markdown_files`` needs ``since`` to
+    actually be a commit already in the clone to diff against, so a
+    shallow clone would make a real ref look like "unknown ref" with no
+    sign of why. Full clones also fetch every branch (not just the
+    default one), since ``since`` may name a ref that only exists there.
+    """
+    if not looks_like_remote(path_or_url):
+        yield path_or_url
+        return
+
+    tmp_dir = tempfile.mkdtemp(prefix="agenthive-import-")
+    try:
+        cmd = ["git", "clone", "--quiet"]
+        if shallow:
+            cmd += ["--depth", "1"]
+        else:
+            cmd += ["--no-single-branch"]
+        cmd += [path_or_url, tmp_dir]
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"git clone of {path_or_url!r} failed: {e.stderr.strip() or e}"
+            ) from e
+        except (OSError, subprocess.SubprocessError) as e:
+            raise RuntimeError(f"git clone of {path_or_url!r} failed: {e}") from e
+        yield tmp_dir
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def discover_markdown_files(root: str, exclude: list[str] | None = None) -> list[Path]:

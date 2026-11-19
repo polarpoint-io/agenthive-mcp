@@ -213,6 +213,116 @@ def test_cli_since_only_creates_nodes_for_what_actually_changed(tmp_path, env):
     assert node["links"] == ["new.md"]
 
 
+# ---- checkout() / remote repos -----------------------------------------
+
+def test_looks_like_remote_matches_common_git_url_shapes():
+    for url in (
+        "https://github.com/polarpoint-io/markdown-pol-docs",
+        "https://github.com/polarpoint-io/markdown-pol-docs.git",
+        "git@github.com:polarpoint-io/markdown-pol-docs.git",
+        "ssh://git@github.com/polarpoint-io/markdown-pol-docs.git",
+    ):
+        assert docimport.looks_like_remote(url), url
+
+
+def test_looks_like_remote_leaves_local_paths_alone():
+    for path in ("/home/claude/markdown-pol-docs", "./docs", "docs", "../other-repo"):
+        assert not docimport.looks_like_remote(path), path
+
+
+def test_checkout_yields_a_plain_path_unchanged(tmp_path):
+    with docimport.checkout(str(tmp_path)) as root:
+        assert root == str(tmp_path)
+
+
+def test_checkout_clones_a_remote_url_and_cleans_up_after(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_git_repo(origin)
+    write(origin, "README.md", "## Hello\n" + "real content " * 5)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", "baseline")
+
+    captured = None
+    with docimport.checkout(f"file://{origin}") as root:
+        captured = root
+        assert root != str(origin)  # a real clone, not the original path
+        assert os.path.exists(os.path.join(root, "README.md"))
+
+    assert not os.path.exists(captured)  # removed once the block exits
+
+
+def test_checkout_shallow_clone_cannot_diff_against_an_earlier_ref(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_git_repo(origin)
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "first")
+    before = _git_rev(origin)
+    write(origin, "new.md", "## New\n" + "content " * 5)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", "second")
+
+    with docimport.checkout(f"file://{origin}", shallow=True) as root, \
+            pytest.raises(RuntimeError):
+        docimport.changed_markdown_files(root, before)
+
+
+def test_checkout_full_clone_can_diff_against_an_earlier_ref(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_git_repo(origin)
+    _git(origin, "commit", "-q", "--allow-empty", "-m", "first")
+    before = _git_rev(origin)
+    write(origin, "new.md", "## New\n" + "content " * 5)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", "second")
+
+    with docimport.checkout(f"file://{origin}", shallow=False) as root:
+        changed = docimport.changed_markdown_files(root, before)
+        assert [p.name for p in changed] == ["new.md"]
+
+
+def test_checkout_raises_a_clear_error_on_a_bad_remote(tmp_path):
+    with pytest.raises(RuntimeError), \
+            docimport.checkout(f"file://{tmp_path / 'does-not-exist'}"):
+        pass
+
+
+def test_cli_import_docs_works_against_a_remote_url(tmp_path, env):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_git_repo(origin)
+    write(origin, "guide.md", "## Guide\n" + "operational content " * 5)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", "baseline")
+
+    cli.main(["import-docs", f"file://{origin}", "--apply"])
+
+    assert len(env.nodes) == 1
+    (node,) = env.nodes.values()
+    assert node["links"] == ["guide.md"]
+
+
+def test_cli_import_docs_since_works_against_a_remote_url(tmp_path, env):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_git_repo(origin)
+    write(origin, "unchanged.md", "## Old\n" + "never touched again " * 5)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", "baseline")
+    before = _git_rev(origin)
+
+    write(origin, "new.md", "## New\n" + "brand new content " * 5)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", "add new.md")
+
+    cli.main(["import-docs", f"file://{origin}", "--since", before, "--apply"])
+
+    assert len(env.nodes) == 1
+    (node,) = env.nodes.values()
+    assert node["links"] == ["new.md"]
+
+
 # ---- sections_for_file / plan -----------------------------------------
 
 def test_sections_below_min_chars_are_dropped(tmp_path):

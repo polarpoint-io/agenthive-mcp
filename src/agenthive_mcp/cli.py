@@ -115,10 +115,18 @@ def cmd_import_docs(argv) -> int:
     runner unless its state dir is explicitly cached, so without
     `--since` a fresh runner re-walks and resubmits the whole tree
     every time.
+
+    PATH can be a git URL (https://, ssh://, git@host:path, or anything
+    ending .git) instead of a local directory - it's cloned to a
+    temporary directory for the run and removed afterward. With
+    `--since`, the clone fetches full history (REF has to actually be
+    in it to diff against); without it, a shallow depth-1 clone, since
+    a whole-tree plan only needs the current snapshot.
     """
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
               "[--since REF] [--min-chars N] [--limit N] [--force] [--apply]\n"
+              "  PATH: a local directory, or a git URL to clone for this run.\n"
               "  --exclude: skip files whose path matches this glob, e.g. "
               "'docs/blog/*' (repeatable).\n"
               "  --since: only markdown changed since this git ref "
@@ -180,12 +188,14 @@ def cmd_import_docs(argv) -> int:
             raise SystemExit("--since needs a git ref") from None
         del rest[i:i + 2]
 
-    if not os.path.isdir(path):
+    is_remote = docimport.looks_like_remote(path)
+    if not is_remote and not os.path.isdir(path):
         print(f"not a directory: {path}")
         return 1
 
     try:
-        sections = docimport.plan(path, min_chars=min_chars, exclude=exclude, since=since)
+        with docimport.checkout(path, shallow=since is None) as root:
+            sections = docimport.plan(root, min_chars=min_chars, exclude=exclude, since=since)
     except RuntimeError as e:
         print(str(e))
         return 1
