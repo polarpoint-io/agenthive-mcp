@@ -110,8 +110,10 @@ def cmd_import_docs(argv) -> int:
     on its own). `--force` bypasses that local check for one run.
     """
     if not argv or argv[0] in ("-h", "--help"):
-        print("agenthive import-docs PATH [--tag TAG]... [--min-chars N] "
-              "[--limit N] [--force] [--apply]\n"
+        print("agenthive import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
+              "[--min-chars N] [--limit N] [--force] [--apply]\n"
+              "  --exclude: skip files whose path matches this glob, e.g. "
+              "'docs/blog/*' (repeatable).\n"
               "  Without --apply: prints the nodes this would create and "
               "writes nothing.\n"
               "  --force: also (re-)submit sections already submitted by "
@@ -131,6 +133,15 @@ def cmd_import_docs(argv) -> int:
             tags.append(rest[i + 1])
         except IndexError:
             raise SystemExit("--tag needs a value") from None
+        del rest[i:i + 2]
+
+    exclude = []
+    while "--exclude" in rest:
+        i = rest.index("--exclude")
+        try:
+            exclude.append(rest[i + 1])
+        except IndexError:
+            raise SystemExit("--exclude needs a value") from None
         del rest[i:i + 2]
 
     min_chars = 40
@@ -155,7 +166,7 @@ def cmd_import_docs(argv) -> int:
         print(f"not a directory: {path}")
         return 1
 
-    sections = docimport.plan(path, min_chars=min_chars)
+    sections = docimport.plan(path, min_chars=min_chars, exclude=exclude)
     if not sections:
         print(f"no importable sections found under {path} "
               f"(nothing ≥ {min_chars} chars)")
@@ -348,7 +359,8 @@ def main(argv=None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor|import-docs>\n"
               "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]\n"
-              "  import-docs PATH [--tag TAG]... [--min-chars N] [--limit N] [--apply]")
+              "  import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
+              "[--min-chars N] [--limit N] [--force] [--apply]")
         return 0
     cmd = COMMANDS.get(argv[0])
     if not cmd:

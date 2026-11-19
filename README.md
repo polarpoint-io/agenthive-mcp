@@ -595,6 +595,26 @@ This is a terminal command, not an MCP tool an agent can call - see
 this stays a human's decision rather than something a session triggers
 on its own.
 
+**Scope it before you point it at a real repo.** A docs site is the
+common case where this matters: it usually holds genuine operational
+material (architecture decisions, runbooks, standards) alongside a
+public blog, marketing assets, and page templates that are not team
+memory by any reading of the term - and `import-docs` cannot tell the
+difference on its own, because by content alone a blog post reads like
+any other markdown file. Run the dry run against the whole tree first;
+if the count looks like "every file in the repo" rather than "the docs
+that are actually operational knowledge", narrow it with `--exclude`
+before going anywhere near `--apply`:
+
+```bash
+agenthive import-docs . --exclude 'docs/blog/*' --exclude 'docs/assets/*' --exclude 'theme/*'
+```
+
+`--exclude` takes an `fnmatch` glob matched against each file's path
+relative to the root you gave; its `*` already matches across `/`, so
+`docs/blog/*` excludes everything under `docs/blog` at any depth - no
+`**` needed. Repeatable.
+
 It defaults to a dry run - prints what it would create and writes
 nothing:
 
@@ -627,6 +647,7 @@ Nothing written - re-run with --apply.
 | Flag | Default | Description |
 |---|---|---|
 | `--tag TAG` | (repeatable) | Extra tag alongside the automatic `doc-import` one. |
+| `--exclude PATTERN` | (repeatable) | Skip files whose path matches this glob (e.g. `docs/blog/*`). See "Scope it" above. |
 | `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
 | `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
 | `--force` | off | Resubmit sections already submitted by an earlier run, reviewed or not. |

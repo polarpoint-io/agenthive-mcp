@@ -92,6 +92,34 @@ def test_skips_vcs_and_dependency_directories(tmp_path):
     assert [p.name for p in found] == ["README.md"]
 
 
+def test_exclude_glob_matches_across_slashes_without_double_star(tmp_path):
+    write(tmp_path, "AGENTS.md", "keep me")
+    write(tmp_path, "docs/technical-practices/testing.md", "keep me too")
+    write(tmp_path, "docs/blog/posts/2026-launch.md", "public blog noise")
+    write(tmp_path, "docs/blog/index.md", "also blog noise")
+
+    found = docimport.discover_markdown_files(str(tmp_path), exclude=["docs/blog/*"])
+    rels = {p.relative_to(tmp_path).as_posix() for p in found}
+    assert rels == {"AGENTS.md", "docs/technical-practices/testing.md"}
+
+
+def test_multiple_exclude_patterns_are_all_applied(tmp_path):
+    write(tmp_path, "AGENTS.md", "keep me")
+    write(tmp_path, "docs/blog/post.md", "blog noise")
+    write(tmp_path, "theme/home.md", "theme noise")
+
+    found = docimport.discover_markdown_files(
+        str(tmp_path), exclude=["docs/blog/*", "theme/*"])
+    assert [p.name for p in found] == ["AGENTS.md"]
+
+
+def test_no_exclude_patterns_behaves_like_before(tmp_path):
+    write(tmp_path, "a.md", "one")
+    write(tmp_path, "b.md", "two")
+    assert len(docimport.discover_markdown_files(str(tmp_path), exclude=[])) == 2
+    assert len(docimport.discover_markdown_files(str(tmp_path))) == 2
+
+
 # ---- sections_for_file / plan -----------------------------------------
 
 def test_sections_below_min_chars_are_dropped(tmp_path):
@@ -173,6 +201,17 @@ def test_limit_caps_how_many_nodes_one_run_creates(tmp_path, env):
     write(tmp_path, "c.md", "## Three\n" + "x" * 50)
     cli.main(["import-docs", str(tmp_path), "--limit", "2", "--apply"])
     assert len(env.nodes) == 2
+
+
+def test_exclude_keeps_a_scoped_apply_from_touching_the_excluded_files(tmp_path, env):
+    write(tmp_path, "AGENTS.md", "## Standards\n" + "real standard " * 5)
+    write(tmp_path, "docs/blog/launch.md", "## Launch\n" + "marketing copy " * 5)
+
+    cli.main(["import-docs", str(tmp_path), "--exclude", "docs/blog/*", "--apply"])
+
+    assert len(env.nodes) == 1
+    (node,) = env.nodes.values()
+    assert node["links"] == ["AGENTS.md"]
 
 
 def test_no_importable_sections_is_not_an_error(tmp_path, env, capsys):

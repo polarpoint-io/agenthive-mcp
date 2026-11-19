@@ -42,6 +42,7 @@ submitted again on its own.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 from dataclasses import dataclass
@@ -60,17 +61,37 @@ _SKIP_DIRS = {
 }
 
 
-def discover_markdown_files(root: str) -> list[Path]:
+def discover_markdown_files(root: str, exclude: list[str] | None = None) -> list[Path]:
     """Every ``.md``/``.markdown`` file under ``root``, skipping the dirs
-    in ``_SKIP_DIRS`` (at any depth) and dotfiles. Sorted for a stable,
-    diffable plan across runs."""
+    in ``_SKIP_DIRS`` (at any depth), dotfiles, and anything matching
+    ``exclude``. Sorted for a stable, diffable plan across runs.
+
+    ``exclude`` patterns are ``fnmatch``-style globs matched against each
+    file's path relative to ``root`` (always posix-style, ``/``, even on
+    Windows). ``fnmatch``'s ``*`` matches any run of characters INCLUDING
+    ``/`` - unlike shell globbing, ``docs/blog/*`` already excludes
+    everything under ``docs/blog`` at any depth, not just its direct
+    children; no ``**`` needed.
+
+    ``_SKIP_DIRS`` exists because node_modules/vendor/.venv are never
+    plausible team knowledge. ``exclude`` is for the opposite situation:
+    a repo (a docs site, most visibly) that mixes genuine operational
+    material with a public blog, marketing assets, or anything else a
+    team would recognise as not-what-this-is-for only by looking at it.
+    """
     root_path = Path(root)
+    patterns = exclude or []
     found: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root_path):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
         for name in filenames:
-            if name.lower().endswith((".md", ".markdown")):
-                found.append(Path(dirpath) / name)
+            if not name.lower().endswith((".md", ".markdown")):
+                continue
+            file_path = Path(dirpath) / name
+            rel = file_path.relative_to(root_path).as_posix()
+            if any(fnmatch.fnmatch(rel, pattern) for pattern in patterns):
+                continue
+            found.append(file_path)
     return sorted(found)
 
 
@@ -141,14 +162,14 @@ def sections_for_file(path: Path, root: Path, min_chars: int) -> list[Section]:
     return out
 
 
-def plan(root: str, min_chars: int = 40) -> list[Section]:
+def plan(root: str, min_chars: int = 40, exclude: list[str] | None = None) -> list[Section]:
     """Every candidate node this import would create, across every
-    markdown file under ``root``. Pure filesystem read - no network
-    call, so a caller can show this to a human before anything is
-    written anywhere."""
+    markdown file under ``root`` not matching ``exclude``. Pure
+    filesystem read - no network call, so a caller can show this to a
+    human before anything is written anywhere."""
     root_path = Path(root)
     sections: list[Section] = []
-    for file_path in discover_markdown_files(root):
+    for file_path in discover_markdown_files(root, exclude=exclude):
         sections.extend(sections_for_file(file_path, root_path, min_chars))
     return sections
 
