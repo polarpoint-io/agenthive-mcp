@@ -25,14 +25,27 @@ plus your MCP client's own config for the server - see
 
 > **PyPI**: `pip install agenthive-mcp` &nbsp;·&nbsp; **Image**: `ghcr.io/polarpoint-io/agenthive-mcp:latest` &nbsp;·&nbsp; **Repo**: <https://github.com/polarpoint-io/agenthive-mcp>
 
+## Features
+
+- **Six MCP tools** - `retrieve_context`, `retrieve_index`, `fetch_nodes`, `report_gaps`, `log_session`, `confirm_memory` - every one a member-role AgentHive call, nothing admin-only. See [Tool reference](#tool-reference).
+- **Progressive disclosure for big neighborhoods** - `retrieve_index` returns ids, titles, tiers, tags and a per-node token cost with the bodies withheld, so a session fetches only what's worth reading via `fetch_nodes`, instead of paying for a whole neighborhood up front.
+- **Tag-narrowed retrieval** - `retrieve_index`'s `tags` filters an already-traversed neighborhood client-side (OR semantics), without another round trip to AgentHive.
+- **stdio or HTTP/SSE transport** - the same server runs as a subprocess your IDE spawns, or as a standalone HTTP/SSE service multiple clients share.
+- **Setup tools, off by default** - `create_agent`, `list_agents`, `create_task`, `list_tasks` are used once per team and then never again, so they don't tax every request's token bill unless `AGENTHIVE_MCP_SETUP_TOOLS=1` is set.
+- **A harness-level plugin** (Claude Code, VS Code, Cursor) - fact injection, tool pruning, a loop guard, and a session-end backstop that runs outside the model's own tool-calling loop. See [The plugin](#the-plugin-claude-code-vs-code-cursor).
+- **A logging safety net** (`agenthive-log`) - a hook that catches sessions the agent forgot to `log_session` itself, without writing a duplicate when it didn't forget. See [Capturing sessions the agent forgot to log](#capturing-sessions-the-agent-forgot-to-log-agenthive-log).
+- **Backfilling from existing docs** (`import-docs`) - turns a markdown repo (local or a remote git URL) into memory nodes, one per heading section, with frontmatter-tag filtering (`--only-tag`), CI-safe incremental runs (`--since`), and offset/limit batching for a large one-time backfill. See [Backfilling memory from existing docs](#backfilling-memory-from-existing-docs-import-docs).
+
 ## Table of contents
 
+- [Features](#features)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
 - [Client integrations](#client-integrations)
 - [Tool reference](#tool-reference)
 - [Wiring an agent up to actually use these tools](#wiring-an-agent-up-to-actually-use-these-tools)
 - [The plugin](#the-plugin-claude-code-vs-code-cursor)
+- [Backfilling memory from existing docs](#backfilling-memory-from-existing-docs-import-docs)
 - [Why a separate repo from AgentHive](#why-a-separate-repo-from-agenthive)
 - [Running from source](#running-from-source)
 - [Development](#development)
