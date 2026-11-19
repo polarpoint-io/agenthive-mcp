@@ -195,6 +195,34 @@ def test_exclude_tags_drops_matching_nodes_from_retrieve_index(fake_server):
     assert result["excluded_by_tags"] == ["doc-import"]
 
 
+def test_exclude_tags_recomputes_approx_tokens_full_neighborhood(fake_server):
+    # Two nodes of very different body length, so a stale (unfiltered)
+    # total and the correctly-recomputed one can't coincidentally match.
+    _seed(fake_server, "Deploying — Rolling back", "rollback body " * 200,
+          ["doc-import"])
+    _seed(fake_server, "Deploying — hard-won lesson", "lesson body " * 20,
+          ["bugfix"])
+
+    full = _call(fake_server.base_url, "retrieve_index", {"anchor": "Deploying"})
+    filtered = _call(fake_server.base_url, "retrieve_index",
+                      {"anchor": "Deploying", "exclude_tags": ["doc-import"]})
+
+    kept = filtered["neighborhood"]
+    assert len(kept) == 1
+    expected = sum(n["approx_tokens"] for n in kept)
+    assert filtered["approx_tokens_full_neighborhood"] == expected
+    # Sanity check this isn't just leaving the pre-filter total in place.
+    assert filtered["approx_tokens_full_neighborhood"] < full["approx_tokens_full_neighborhood"]
+
+
+def test_exclude_tags_zeroes_approx_tokens_full_neighborhood_when_index_empties(fake_server):
+    _seed(fake_server, "Only noisy node", "doc body " * 200, ["doc-import"])
+    result = _call(fake_server.base_url, "retrieve_index",
+                    {"anchor": "Only noisy node", "exclude_tags": ["doc-import"]})
+    assert result["neighborhood"] == []
+    assert result["approx_tokens_full_neighborhood"] == 0
+
+
 def test_exclude_tags_untouched_when_nothing_matches(fake_server):
     _seed(fake_server, "Quiet topic", "body text here", ["decision"])
     result = _call(fake_server.base_url, "retrieve_context",

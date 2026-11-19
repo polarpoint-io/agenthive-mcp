@@ -76,9 +76,10 @@ def _exclude_by_tags(payload: dict, exclude_tags: list[str]) -> dict:
 
     Client-side, after the fact - see the module docstring for why this
     is the one tool logic lives in here rather than just passing a query
-    param through. Recomputes neighborhood_count and approx_tokens so a
-    caller reading just those fields isn't looking at stale numbers for
-    a neighborhood that no longer matches what came back."""
+    param through. Recomputes neighborhood_count, approx_tokens, and (in
+    index mode) approx_tokens_full_neighborhood so a caller reading just
+    those fields isn't looking at stale numbers for a neighborhood that
+    no longer matches what came back."""
     wanted = {str(t).strip().lower() for t in exclude_tags if str(t).strip()}
     if not wanted:
         return payload
@@ -95,6 +96,14 @@ def _exclude_by_tags(payload: dict, exclude_tags: list[str]) -> dict:
         narrowed["approx_tokens"] = sum(len(n.get("title") or "") for n in kept) // 4
     else:
         narrowed["approx_tokens"] = 0
+    # Index mode's own approx_tokens_full_neighborhood is what fetching
+    # every INDEXED node's body would cost (AgentHive's retrieval.py
+    # project_index()) - each kept entry already carries that per-node
+    # cost as its own approx_tokens, upstream, so this sums to 0 for an
+    # empty index rather than staying at the pre-filter total.
+    if "approx_tokens_full_neighborhood" in narrowed:
+        narrowed["approx_tokens_full_neighborhood"] = sum(
+            n.get("approx_tokens", 0) for n in kept)
     narrowed["excluded_by_tags"] = sorted(wanted)
     return narrowed
 
