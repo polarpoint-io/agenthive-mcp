@@ -575,6 +575,199 @@ trade is right for them.
 | `AGENTHIVE_HOOK_STATE_DIR` | `$XDG_STATE_HOME/agenthive` | Where the dedupe and "already logged" markers live. |
 
 
+## Backfilling memory from existing docs (`import-docs`)
+
+A new team usually already has a pile of markdown lying around -
+runbooks, READMEs, incident postmortems - that `log_session` will never
+retroactively capture because no agent session wrote it. `import-docs`
+turns a directory of it into the same pending nodes a session's
+`log_session` call would:
+
+```bash
+agenthive import-docs ./docs
+```
+
+One node per heading-delimited section (not per file - a 400-line
+runbook becomes one node per procedure, the same unit AgentHive's
+`hub_cutoff`/index-then-fetch retrieval already assumes a node is), each
+tagged `doc-import` and linked back to its source file.
+
+The path doesn't have to be a local checkout - a git URL works too
+(`https://`, `ssh://`, `git@host:path`, or anything ending `.git`),
+and is cloned to a throwaway temp directory for the run and removed
+afterward:
+
+```bash
+agenthive import-docs https://github.com/polarpoint-io/markdown-pol-docs --exclude 'docs/blog/*'
+```
+
+Useful for running this from somewhere that doesn't already have the
+target repo checked out - a scheduled job on a bastion host, say -
+without a separate clone step of your own to maintain.
+
+This is a terminal command, not an MCP tool an agent can call - see
+"What is deliberately not a tool here" below for why a bulk action like
+this stays a human's decision rather than something a session triggers
+on its own.
+
+**Scope it before you point it at a real repo.** A docs site is the
+common case where this matters: it usually holds genuine operational
+material (architecture decisions, runbooks, standards) alongside a
+public blog, marketing assets, and page templates that are not team
+memory by any reading of the term - and `import-docs` cannot tell the
+difference on its own, because by content alone a blog post reads like
+any other markdown file. Run the dry run against the whole tree first;
+if the count looks like "every file in the repo" rather than "the docs
+that are actually operational knowledge", narrow it with `--exclude`
+before going anywhere near `--apply`:
+
+```bash
+agenthive import-docs . --exclude 'docs/blog/*' --exclude 'docs/assets/*' --exclude 'theme/*'
+```
+
+`--exclude` takes an `fnmatch` glob matched against each file's path
+relative to the root you gave; its `*` already matches across `/`, so
+`docs/blog/*` excludes everything under `docs/blog` at any depth - no
+`**` needed. Repeatable.
+
+If the repo already classifies its own docs - mkdocs' own frontmatter
+`tags:` key is common, and often carries exactly the distinction you
+want (`runbook`, `kb`, `adr`) - `--only-tag` uses that instead of
+guessing at paths:
+
+```bash
+agenthive import-docs . --only-tag runbook --only-tag kb
+```
+
+OR'd together like AgentHive's own `tags` filter: a file needs only one
+of them. Every imported node keeps its file's frontmatter tags either
+way (alongside `doc-import` and anything from `--tag`), so they reach
+AgentHive as real, filterable tags on the node - `retrieve_context(...,
+tags=["runbook"])` works on them afterward, not just `import-docs`
+itself.
+
+It defaults to a dry run - prints what it would create and writes
+nothing:
+
+```
+    187 chars  docs/deploy.md — Rolling back  [runbook]
+    412 chars  docs/deploy.md — Blue/green cutover  [runbook]
+     94 chars  docs/oncall.md — Paging thresholds  [runbook, kb]
+
+3 node(s) would be created, tagged doc-import plus each file's own frontmatter tags (shown above). Each normally starts PENDING until an admin reviews it, unless your AgentHive's own auto-approve/auto-reject rules decide it outright - that's server policy, not something this dry run can predict.
+Nothing written - re-run with --apply.
+```
+
+Add `--apply` once the plan looks right. It's safe to re-run by hand -
+including before anyone's reviewed the last batch, which is the case
+AgentHive's own dedup doesn't cover: `create_memory` only rejects an
+exact title+body repeat against an *approved* node, so without its own
+check this command would resubmit the exact same pending section every
+run until someone reviews it. A local marker (same state directory
+`agenthive-log`'s hook already uses) remembers what's been submitted
+regardless of review status, so a second run on the SAME machine only
+queues sections that are new or actually changed:
+
+```
+0 node(s) would be created, tagged doc-import, each normally PENDING until an admin reviews it (unless server policy resolves it outright).
+3 already submitted by an earlier run - skipped (would still skip under --apply; --force to include them anyway).
+Nothing written - re-run with --apply.
+```
+
+Each node's actual outcome - `pending`, or `approved`/`rejected` if your
+AgentHive has auto-approve or auto-reject rules configured - is only
+known once `--apply` actually posts it; the summary line breaks the
+count down by what the server returned, not an assumption:
+
+```
+  pending  docs/oncall.md — Paging thresholds
+  approved docs/deploy.md — Rolling back
+
+2 node(s) logged (1 approved, 1 pending) - a pending one needs an admin's review before it reaches anyone's retrieve_context; an approved one already has.
+```
+
+**Batching without relying on local state.** `--limit` by itself always
+re-slices the same leading N of whatever's left; it only advances to
+the next batch because the local dedup marker excludes the previous
+batch on a persistent machine. That marker does not survive an
+ephemeral CI runner and isn't shared across people running this from
+different machines - in either case, `--limit` alone would reselect
+the same first batch forever. `--offset N` advances explicitly
+instead: skip the first N of what's left, then take the next
+`--limit`, no state required.
+
+```bash
+agenthive import-docs . --offset 50 --limit 50 --apply   # the next batch after the first 50
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tag TAG` | (repeatable) | Extra tag alongside the automatic `doc-import` one. |
+| `--exclude PATTERN` | (repeatable) | Skip files whose path matches this glob (e.g. `docs/blog/*`). See "Scope it" above. |
+| `--only-tag TAG` | (repeatable) | Skip files whose frontmatter `tags:` don't include this (OR'd together). See "Scope it" above. |
+| `--since REF` | off (whole tree) | Only files git shows changed since this ref. See "Running it automatically" below. |
+| `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
+| `--offset N` | `0` | Skip this many of what's left before applying `--limit` - the stateless way to advance to the next batch. |
+| `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
+| `--force` | off | Resubmit sections already submitted by an earlier run, reviewed or not. |
+| `--apply` | off (dry run) | Actually write the nodes. Without it, nothing reaches AgentHive. |
+
+### Running it automatically (CI)
+
+The local dedup marker above lives under `AGENTHIVE_HOOK_STATE_DIR` /
+`XDG_STATE_HOME` - fine on a human's own machine, where it persists
+between runs on its own. It does **not** survive an ephemeral CI
+runner unless that exact path is wired into the runner's cache step,
+and getting that wrong is not a loud failure: the run just quietly
+re-walks and resubmits the whole tree every time, because every file
+looks "not yet submitted" to a runner with no memory of the last one.
+
+`--since REF` sidesteps the problem instead of needing the cache fix
+at all: it scopes the import to only the markdown git shows changed
+between `REF` and `HEAD`, so the thing a stateless runner is missing
+(what happened last time) is read from the repo's own history, which
+the runner already has in its checkout. A GitHub Actions workflow
+triggered on push to `main`, using the previous commit as `REF`:
+
+```yaml
+name: Backfill AgentHive memory from docs
+on:
+  push:
+    branches: [main]
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2   # need the commit before HEAD for --since
+      - run: pip install agenthive-mcp
+      - run: >
+          agenthive import-docs . --since ${{ github.event.before }}
+          --exclude 'docs/blog/*' --exclude 'docs/assets/*' --exclude 'theme/*'
+          --apply
+        env:
+          AGENTHIVE_URL: ${{ secrets.AGENTHIVE_URL }}
+          AGENTHIVE_TOKEN: ${{ secrets.AGENTHIVE_TOKEN }}
+          AGENTHIVE_TEAM_ID: ${{ secrets.AGENTHIVE_TEAM_ID }}
+```
+
+Two things worth deciding deliberately before turning this on, not
+discovering by accident:
+
+- **`github.event.before` on the first push after enabling this is the
+  all-zero SHA**, which `--since` can't diff against. Run the initial
+  whole-tree backfill by hand first (with `--limit`, in batches - see
+  above), then let this workflow take over for what changes afterward.
+- **Use a token that is not a person's personal one.** AgentHive has no
+  separate "service account" concept - a token is just a member's own,
+  same as a human's - so an automated `--apply` should get its own
+  dedicated team member rather than running as someone's personal
+  identity. `doc-import` already tags every node it creates either way,
+  so a reviewer can tell these apart from a human's `log_session`
+  regardless.
+
 ## What is deliberately not a tool here
 
 AgentHive's memory-processing layer raises four kinds of proposal from

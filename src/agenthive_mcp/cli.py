@@ -11,8 +11,9 @@ import json
 import os
 import sys
 
-from . import facts, manifests, toolprune
-from .client import AgentHiveConfigError, get_config
+from . import docimport, facts, manifests, toolprune
+from .client import AgentHiveConfigError, AgentHiveError, get_config
+from .client import request as _request
 
 
 def _host() -> str:
@@ -91,6 +92,257 @@ def cmd_doctor(argv) -> int:
     payload = facts.fetch(os.getcwd())
     print(f"  server          reachable, {len(payload.get('facts') or [])} facts")
     return 0
+
+
+def cmd_import_docs(argv) -> int:
+    """Turn a repo of markdown docs into AgentHive memory nodes.
+
+    Dry run by default - this is a command a human runs once or
+    occasionally, not something an agent decides to do mid-session (see
+    docimport.py's docstring), and the review queue is the thing a bulk
+    import can genuinely flood. `--apply` is the one flag that actually
+    writes anything.
+
+    Safe to re-run by hand: a (team, title, body) already submitted by
+    a previous --apply is skipped even if nobody has reviewed it yet
+    (see docimport.py's "WHY THIS MODULE HAS ITS OWN DEDUP"). `--force`
+    bypasses that local check for one run.
+
+    On CI, prefer `--since REF` over relying on that: it scopes to
+    only the markdown git shows changed since REF, which needs no
+    state to persist between runs - the runner's own checkout already
+    has it. The local dedup above does NOT survive an ephemeral
+    runner unless its state dir is explicitly cached, so without
+    `--since` a fresh runner re-walks and resubmits the whole tree
+    every time.
+
+    PATH can be a git URL (https://, ssh://, git@host:path, or anything
+    ending .git) instead of a local directory - it's cloned to a
+    temporary directory for the run and removed afterward. With
+    `--since`, the clone fetches full history (REF has to actually be
+    in it to diff against); without it, a shallow depth-1 clone, since
+    a whole-tree plan only needs the current snapshot.
+
+    `--only-tag` scopes to files whose own frontmatter `tags:` include
+    at least one of these (a docs site's mkdocs tags - `runbook`, `kb`,
+    `adr` - are often the real classification `--exclude`'s path globs
+    can only approximate). Every imported node carries its file's
+    frontmatter tags regardless, so they reach AgentHive as real tags
+    whether or not you ever filter on them.
+
+    `--limit` caps how many *new* nodes one run creates, to fill the
+    review queue in batches rather than flooding it - but by itself it
+    always re-slices the same leading N of whatever's left, which only
+    advances to the next batch because local dedup state marks the
+    previous batch as already-submitted on a persistent machine. That
+    tracking does NOT survive an ephemeral CI runner (see --since
+    above) and isn't shared across people running this from different
+    machines, so in either case `--limit` alone would reselect the
+    same first batch forever. `--offset N` advances explicitly instead,
+    needing no state of its own: skip the first N of what's left, then
+    take the next `--limit`.
+    """
+    if not argv or argv[0] in ("-h", "--help"):
+        print("agenthive import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
+              "[--only-tag TAG]... [--since REF] [--min-chars N] [--offset N] "
+              "[--limit N] [--force] [--apply]\n"
+              "  PATH: a local directory, or a git URL to clone for this run.\n"
+              "  --exclude: skip files whose path matches this glob, e.g. "
+              "'docs/blog/*' (repeatable).\n"
+              "  --only-tag: skip files whose frontmatter `tags:` don't "
+              "include this (repeatable, OR'd together).\n"
+              "  --since: only markdown changed since this git ref "
+              "(the CI-safe mode - see --help text above).\n"
+              "  --offset: skip this many of what's left before applying "
+              "--limit - the stateless way to advance to the next batch.\n"
+              "  Without --apply: prints the nodes this would create and "
+              "writes nothing.\n"
+              "  --force: also (re-)submit sections already submitted by "
+              "an earlier run.")
+        return 0
+
+    path = argv[0]
+    rest = argv[1:]
+    apply = "--apply" in rest
+    force = "--force" in rest
+    rest = [a for a in rest if a not in ("--apply", "--force")]
+
+    tags = ["doc-import"]
+    while "--tag" in rest:
+        i = rest.index("--tag")
+        try:
+            tags.append(rest[i + 1])
+        except IndexError:
+            raise SystemExit("--tag needs a value") from None
+        del rest[i:i + 2]
+
+    exclude = []
+    while "--exclude" in rest:
+        i = rest.index("--exclude")
+        try:
+            exclude.append(rest[i + 1])
+        except IndexError:
+            raise SystemExit("--exclude needs a value") from None
+        del rest[i:i + 2]
+
+    only_tags = []
+    while "--only-tag" in rest:
+        i = rest.index("--only-tag")
+        try:
+            only_tags.append(rest[i + 1])
+        except IndexError:
+            raise SystemExit("--only-tag needs a value") from None
+        del rest[i:i + 2]
+
+    min_chars = 40
+    if "--min-chars" in rest:
+        i = rest.index("--min-chars")
+        try:
+            min_chars = int(rest[i + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--min-chars needs an integer") from None
+        del rest[i:i + 2]
+
+    limit = None
+    if "--limit" in rest:
+        i = rest.index("--limit")
+        try:
+            limit = int(rest[i + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--limit needs an integer") from None
+        if limit < 0:
+            # A negative value is a valid Python slice endpoint (counts
+            # from the end), so new_sections[:limit] would silently keep
+            # all-but-the-last-N instead of rejecting the batch size -
+            # exactly the queue-flooding case --limit exists to prevent.
+            raise SystemExit("--limit must be 0 or a positive integer")
+        del rest[i:i + 2]
+
+    offset = 0
+    if "--offset" in rest:
+        i = rest.index("--offset")
+        try:
+            offset = int(rest[i + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--offset needs an integer") from None
+        if offset < 0:
+            raise SystemExit("--offset must be 0 or a positive integer")
+        del rest[i:i + 2]
+
+    since = None
+    if "--since" in rest:
+        i = rest.index("--since")
+        try:
+            since = rest[i + 1]
+        except IndexError:
+            raise SystemExit("--since needs a git ref") from None
+        del rest[i:i + 2]
+
+    is_remote = docimport.looks_like_remote(path)
+    if not is_remote and not os.path.isdir(path):
+        print(f"not a directory: {path}")
+        return 1
+
+    try:
+        with docimport.checkout(path, shallow=since is None) as root:
+            sections = docimport.plan(
+                root, min_chars=min_chars, exclude=exclude, since=since,
+                only_tags=only_tags or None,
+            )
+    except RuntimeError as e:
+        print(str(e))
+        return 1
+
+    if not sections:
+        scope = f"changed since {since}" if since else f"under {path}"
+        print(f"no importable sections found {scope} "
+              f"(nothing ≥ {min_chars} chars)")
+        return 0
+
+    # Config is what lets us compute team_scope and so check the local
+    # dedup state at all - optional for a dry run (it just can't show
+    # what's already been submitted), required for --apply.
+    team_scope = None
+    config_error = None
+    try:
+        base_url, _, team_id = get_config()
+        team_scope = f"{base_url}|{team_id}"
+    except AgentHiveConfigError as e:
+        config_error = e
+
+    if team_scope and not force:
+        new_sections = [s for s in sections if not docimport.already_submitted(team_scope, s)]
+        skipped = len(sections) - len(new_sections)
+    else:
+        new_sections = sections
+        skipped = 0
+
+    if offset:
+        new_sections = new_sections[offset:]
+    if limit is not None:
+        new_sections = new_sections[:limit]
+
+    if not apply:
+        for s in new_sections:
+            extra = f"  [{', '.join(s.tags)}]" if s.tags else ""
+            print(f"  {len(s.body):>6} chars  {s.title}{extra}")
+        print(f"\n{len(new_sections)} node(s) would be created, tagged "
+              f"{', '.join(tags)} plus each file's own frontmatter tags "
+              "(shown above). Each normally starts PENDING until an admin "
+              "reviews it, unless your AgentHive's own auto-approve/"
+              "auto-reject rules decide it outright - that's server policy, "
+              "not something this dry run can predict.")
+        if skipped:
+            print(f"{skipped} already submitted by an earlier run - "
+                  "skipped (would still skip under --apply; --force to "
+                  "include them anyway).")
+        if team_scope is None:
+            print("(set AGENTHIVE_URL/AGENTHIVE_TOKEN/AGENTHIVE_TEAM_ID to "
+                  "also see what's already been submitted)")
+        print("Nothing written - re-run with --apply.")
+        return 0
+
+    if config_error:
+        print(f"not configured: {config_error}")
+        return 1
+
+    if not new_sections:
+        print(f"nothing new to import under {path} - "
+              f"{skipped} already submitted. --force to resubmit anyway.")
+        return 0
+
+    by_status: dict[str, int] = {}
+    failed = 0
+    for s in new_sections:
+        try:
+            node_tags = sorted({*tags, *s.tags})  # + the file's own frontmatter tags
+            result = _request(
+                "POST", f"/teams/{team_id}/memory",
+                body={"title": s.title, "body": s.body, "tags": node_tags,
+                      "links": [s.source]},
+            )
+            # AgentHive's own auto-approve/auto-reject rules can resolve
+            # a node on the spot - "pending" is the common case, not a
+            # guarantee, so report what the server actually decided
+            # rather than assuming every create sat down in the queue.
+            status = result.get("status") or "pending"
+            by_status[status] = by_status.get(status, 0) + 1
+            docimport.mark_submitted(team_scope, s)
+            print(f"  {status:<9}{s.title}")
+        except AgentHiveError as e:
+            # Not marked as submitted - a failed POST should be retried
+            # by the next run, not silently skipped forever.
+            failed += 1
+            print(f"  FAILED   {s.title}: {e}")
+
+    created = sum(by_status.values())
+    breakdown = ", ".join(f"{n} {status}" for status, n in sorted(by_status.items()))
+    print(f"\n{created} node(s) logged" + (f" ({breakdown})" if breakdown else "") +
+          (f", {failed} failed" if failed else "") +
+          (f", {skipped} already submitted" if skipped else "") +
+          " - a pending one needs an admin's review before it reaches "
+          "anyone's retrieve_context; an approved one already has.")
+    return 1 if failed else 0
 
 
 def cmd_install(argv) -> int:
@@ -201,14 +453,17 @@ def _read_json(path):
 
 COMMANDS = {"status": cmd_status, "facts": cmd_facts,
             "toolprune": cmd_toolprune, "doctor": cmd_doctor,
-            "install": cmd_install, "uninstall": cmd_uninstall}
+            "install": cmd_install, "uninstall": cmd_uninstall,
+            "import-docs": cmd_import_docs}
 
 
 def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
-        print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor>\n"
-              "  install [--harness claude|vscode|cursor|copilot] [--project DIR] [--dry-run] [--print]")
+        print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor|import-docs>\n"
+              "  install [--harness claude|vscode|cursor|copilot] [--project DIR] [--dry-run] [--print]\n"
+              "  import-docs PATH [--tag TAG]... [--exclude PATTERN]... [--only-tag TAG]... "
+              "[--since REF] [--min-chars N] [--offset N] [--limit N] [--force] [--apply]")
         return 0
     cmd = COMMANDS.get(argv[0])
     if not cmd:
