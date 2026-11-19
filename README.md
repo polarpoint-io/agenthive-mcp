@@ -273,6 +273,29 @@ Every tool here is a **member**-role AgentHive call - the same tier your persona
 | `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending`. Optionally carries the session's `outcome` and turn count, which is what the evidence endpoint measures |
 | `confirm_memory` | Say whether a node you were served was still true in practice (`node_id`, `verdict`). A contradiction is *reported*, never acted on: it blocks promotion and can propose a demotion for a human to approve, but nothing is removed by a vote |
 
+### Narrowing a retrieval by tags
+
+`tags` keeps only nodes carrying at least one of them; `exclude_tags`
+drops any node carrying at least one instead - both OR semantics (one
+match is enough), and both can be used together:
+
+```python
+retrieve_context(anchor="deploy", exclude_tags=["doc-import"])  # skip imported docs, keep the rest
+retrieve_index(anchor="deploy", tags=["runbook"])                # only nodes tagged runbook
+```
+
+A handful of tags are reserved by AgentHive itself and change how a
+node is traversed, not just how it's filtered - `decision`, `bugfix`,
+`security_alert`, `sensitive` (see AgentHive's own README/ADR for what
+each one does). `tags`/`exclude_tags` here just narrow or thin an
+already-traversed neighborhood; they don't change which nodes the
+traversal reaches in the first place.
+
+`exclude_tags` is applied client-side, after `retrieve_context`/
+`retrieve_index` already ran, so `neighborhood_count`, `approx_tokens`
+and (in index mode) `approx_tokens_full_neighborhood` all reflect the
+narrowed result, not the pre-filter one.
+
 ### Tool definitions cost tokens too
 
 These definitions are sent on **every** request for the whole session, so
