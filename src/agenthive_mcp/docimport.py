@@ -45,6 +45,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +60,10 @@ _SKIP_DIRS = {
     ".git", "node_modules", "vendor", ".venv", "venv",
     "__pycache__", ".tox", "dist", "build",
 }
+
+
+def _is_excluded(rel_posix: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(rel_posix, pattern) for pattern in patterns)
 
 
 def discover_markdown_files(root: str, exclude: list[str] | None = None) -> list[Path]:
@@ -89,8 +94,50 @@ def discover_markdown_files(root: str, exclude: list[str] | None = None) -> list
                 continue
             file_path = Path(dirpath) / name
             rel = file_path.relative_to(root_path).as_posix()
-            if any(fnmatch.fnmatch(rel, pattern) for pattern in patterns):
+            if _is_excluded(rel, patterns):
                 continue
+            found.append(file_path)
+    return sorted(found)
+
+
+def changed_markdown_files(root: str, since: str, exclude: list[str] | None = None) -> list[Path]:
+    """Markdown files added or modified between the git ref ``since`` and
+    the working tree's current HEAD - not the whole tree.
+
+    This is the piece that makes a scheduled import SAFE ON A CI RUNNER
+    specifically, as opposed to a human's own long-lived machine: the
+    local (team, title, body) marker ``already_submitted`` checks lives
+    under ``AGENTHIVE_HOOK_STATE_DIR``/``XDG_STATE_HOME``, which an
+    ephemeral runner does not keep between invocations unless its cache
+    step is wired up for that exact path - get that wrong and every run
+    re-walks and resubmits the entire tree. Scoping to ``since`` instead
+    means a run never needs to remember anything of its own: the git ref
+    (the previous run's commit, say) IS the memory, and it costs nothing
+    to keep because the repo's own history already keeps it.
+
+    Deleted files are excluded (``--diff-filter=d``, lowercase - that
+    excludes Deleted, not restricts to it) since there is nothing left
+    to read; a renamed-with-changes file shows up as its new path.
+    """
+    root_path = Path(root)
+    try:
+        done = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=d", f"{since}..HEAD"],
+            cwd=root_path, capture_output=True, text=True, timeout=30, check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"git diff against {since!r} failed under {root}: {e}") from e
+
+    patterns = exclude or []
+    found: list[Path] = []
+    for line in done.stdout.splitlines():
+        rel = line.strip()
+        if not rel.lower().endswith((".md", ".markdown")):
+            continue
+        if _is_excluded(rel, patterns):
+            continue
+        file_path = root_path / rel
+        if file_path.is_file():  # belt-and-braces alongside --diff-filter=d
             found.append(file_path)
     return sorted(found)
 
@@ -162,14 +209,29 @@ def sections_for_file(path: Path, root: Path, min_chars: int) -> list[Section]:
     return out
 
 
-def plan(root: str, min_chars: int = 40, exclude: list[str] | None = None) -> list[Section]:
-    """Every candidate node this import would create, across every
-    markdown file under ``root`` not matching ``exclude``. Pure
-    filesystem read - no network call, so a caller can show this to a
-    human before anything is written anywhere."""
+def plan(
+    root: str,
+    min_chars: int = 40,
+    exclude: list[str] | None = None,
+    since: str | None = None,
+) -> list[Section]:
+    """Every candidate node this import would create.
+
+    Without ``since``: every markdown file under ``root`` not matching
+    ``exclude`` - the whole-tree backfill. With ``since``: only files
+    git shows as changed between that ref and HEAD - see
+    ``changed_markdown_files`` for why that is the shape a CI run needs.
+
+    Pure filesystem (and, with ``since``, git) read - no network call,
+    so a caller can show this to a human before anything is written
+    anywhere."""
     root_path = Path(root)
+    if since:
+        files = changed_markdown_files(root, since, exclude=exclude)
+    else:
+        files = discover_markdown_files(root, exclude=exclude)
     sections: list[Section] = []
-    for file_path in discover_markdown_files(root, exclude=exclude):
+    for file_path in files:
         sections.extend(sections_for_file(file_path, root_path, min_chars))
     return sections
 

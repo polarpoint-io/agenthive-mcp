@@ -627,16 +627,15 @@ nothing:
 Nothing written - re-run with --apply.
 ```
 
-Add `--apply` once the plan looks right. It's safe to re-run - including
-before anyone's reviewed the last batch, which is the case AgentHive's
-own dedup doesn't cover: `create_memory` only rejects an exact
-title+body repeat against an *approved* node, so without its own check
-this command would resubmit the exact same pending section every run
-until someone reviews it. A local marker (same state directory
+Add `--apply` once the plan looks right. It's safe to re-run by hand -
+including before anyone's reviewed the last batch, which is the case
+AgentHive's own dedup doesn't cover: `create_memory` only rejects an
+exact title+body repeat against an *approved* node, so without its own
+check this command would resubmit the exact same pending section every
+run until someone reviews it. A local marker (same state directory
 `agenthive-log`'s hook already uses) remembers what's been submitted
-regardless of review status, so a second run only queues sections that
-are new or actually changed - which is what makes this safe to put on a
-schedule rather than something to run by hand every time:
+regardless of review status, so a second run on the SAME machine only
+queues sections that are new or actually changed:
 
 ```
 0 node(s) would be created, tagged doc-import, each PENDING until an admin reviews it.
@@ -648,10 +647,67 @@ Nothing written - re-run with --apply.
 |---|---|---|
 | `--tag TAG` | (repeatable) | Extra tag alongside the automatic `doc-import` one. |
 | `--exclude PATTERN` | (repeatable) | Skip files whose path matches this glob (e.g. `docs/blog/*`). See "Scope it" above. |
+| `--since REF` | off (whole tree) | Only files git shows changed since this ref. See "Running it automatically" below. |
 | `--min-chars N` | `40` | Drop sections shorter than this - a bare "See also" heading isn't worth a review-queue entry. |
 | `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
 | `--force` | off | Resubmit sections already submitted by an earlier run, reviewed or not. |
 | `--apply` | off (dry run) | Actually write the nodes. Without it, nothing reaches AgentHive. |
+
+### Running it automatically (CI)
+
+The local dedup marker above lives under `AGENTHIVE_HOOK_STATE_DIR` /
+`XDG_STATE_HOME` - fine on a human's own machine, where it persists
+between runs on its own. It does **not** survive an ephemeral CI
+runner unless that exact path is wired into the runner's cache step,
+and getting that wrong is not a loud failure: the run just quietly
+re-walks and resubmits the whole tree every time, because every file
+looks "not yet submitted" to a runner with no memory of the last one.
+
+`--since REF` sidesteps the problem instead of needing the cache fix
+at all: it scopes the import to only the markdown git shows changed
+between `REF` and `HEAD`, so the thing a stateless runner is missing
+(what happened last time) is read from the repo's own history, which
+the runner already has in its checkout. A GitHub Actions workflow
+triggered on push to `main`, using the previous commit as `REF`:
+
+```yaml
+name: Backfill AgentHive memory from docs
+on:
+  push:
+    branches: [main]
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2   # need the commit before HEAD for --since
+      - run: pip install agenthive-mcp
+      - run: >
+          agenthive import-docs . --since ${{ github.event.before }}
+          --exclude 'docs/blog/*' --exclude 'docs/assets/*' --exclude 'theme/*'
+          --apply
+        env:
+          AGENTHIVE_URL: ${{ secrets.AGENTHIVE_URL }}
+          AGENTHIVE_TOKEN: ${{ secrets.AGENTHIVE_TOKEN }}
+          AGENTHIVE_TEAM_ID: ${{ secrets.AGENTHIVE_TEAM_ID }}
+```
+
+Two things worth deciding deliberately before turning this on, not
+discovering by accident:
+
+- **`github.event.before` on the first push after enabling this is the
+  all-zero SHA**, which `--since` can't diff against. Run the initial
+  whole-tree backfill by hand first (with `--limit`, in batches - see
+  above), then let this workflow take over for what changes afterward.
+- **Use a token that is not a person's personal one.** AgentHive has no
+  separate "service account" concept - a token is just a member's own,
+  same as a human's - so an automated `--apply` should get its own
+  dedicated team member rather than running as someone's personal
+  identity. `doc-import` already tags every node it creates either way,
+  so a reviewer can tell these apart from a human's `log_session`
+  regardless.
 
 ## What is deliberately not a tool here
 

@@ -103,17 +103,26 @@ def cmd_import_docs(argv) -> int:
     import can genuinely flood. `--apply` is the one flag that actually
     writes anything.
 
-    Safe to re-run, including on a schedule: a (team, title, body)
-    already submitted by a previous --apply is skipped even if nobody
-    has reviewed it yet (see docimport.py's "WHY THIS MODULE HAS ITS
-    OWN DEDUP" for why AgentHive's own approved-only dedup isn't enough
-    on its own). `--force` bypasses that local check for one run.
+    Safe to re-run by hand: a (team, title, body) already submitted by
+    a previous --apply is skipped even if nobody has reviewed it yet
+    (see docimport.py's "WHY THIS MODULE HAS ITS OWN DEDUP"). `--force`
+    bypasses that local check for one run.
+
+    On CI, prefer `--since REF` over relying on that: it scopes to
+    only the markdown git shows changed since REF, which needs no
+    state to persist between runs - the runner's own checkout already
+    has it. The local dedup above does NOT survive an ephemeral
+    runner unless its state dir is explicitly cached, so without
+    `--since` a fresh runner re-walks and resubmits the whole tree
+    every time.
     """
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
-              "[--min-chars N] [--limit N] [--force] [--apply]\n"
+              "[--since REF] [--min-chars N] [--limit N] [--force] [--apply]\n"
               "  --exclude: skip files whose path matches this glob, e.g. "
               "'docs/blog/*' (repeatable).\n"
+              "  --since: only markdown changed since this git ref "
+              "(the CI-safe mode - see --help text above).\n"
               "  Without --apply: prints the nodes this would create and "
               "writes nothing.\n"
               "  --force: also (re-)submit sections already submitted by "
@@ -162,13 +171,28 @@ def cmd_import_docs(argv) -> int:
             raise SystemExit("--limit needs an integer") from None
         del rest[i:i + 2]
 
+    since = None
+    if "--since" in rest:
+        i = rest.index("--since")
+        try:
+            since = rest[i + 1]
+        except IndexError:
+            raise SystemExit("--since needs a git ref") from None
+        del rest[i:i + 2]
+
     if not os.path.isdir(path):
         print(f"not a directory: {path}")
         return 1
 
-    sections = docimport.plan(path, min_chars=min_chars, exclude=exclude)
+    try:
+        sections = docimport.plan(path, min_chars=min_chars, exclude=exclude, since=since)
+    except RuntimeError as e:
+        print(str(e))
+        return 1
+
     if not sections:
-        print(f"no importable sections found under {path} "
+        scope = f"changed since {since}" if since else f"under {path}"
+        print(f"no importable sections found {scope} "
               f"(nothing ≥ {min_chars} chars)")
         return 0
 
@@ -359,7 +383,7 @@ def main(argv=None) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print("agenthive <install|uninstall|status|facts|toolprune [apply|restore]|doctor|import-docs>\n"
               "  install [--harness claude|vscode|cursor] [--project DIR] [--dry-run] [--print]\n"
-              "  import-docs PATH [--tag TAG]... [--exclude PATTERN]... "
+              "  import-docs PATH [--tag TAG]... [--exclude PATTERN]... [--since REF] "
               "[--min-chars N] [--limit N] [--force] [--apply]")
         return 0
     cmd = COMMANDS.get(argv[0])

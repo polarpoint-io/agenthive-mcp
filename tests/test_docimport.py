@@ -120,6 +120,99 @@ def test_no_exclude_patterns_behaves_like_before(tmp_path):
     assert len(docimport.discover_markdown_files(str(tmp_path))) == 2
 
 
+# ---- changed_markdown_files / --since (the CI-safe mode) --------------
+
+def _git(repo, *args):
+    import subprocess
+    subprocess.run(["git", *args], cwd=repo, check=True,
+                    capture_output=True, text=True)
+
+
+def _init_git_repo(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    return tmp_path
+
+
+def test_since_returns_only_files_changed_after_the_given_ref(tmp_path):
+    _init_git_repo(tmp_path)
+    write(tmp_path, "unchanged.md", "## Old\n" + "never touched again " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "baseline")
+    before = _git_rev(tmp_path)
+
+    write(tmp_path, "new.md", "## New\n" + "brand new content " * 5)
+    write(tmp_path, "unchanged.md", "## Old\n" + "never touched again " * 5)  # untouched
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add new.md")
+
+    changed = docimport.changed_markdown_files(str(tmp_path), before)
+    assert [p.name for p in changed] == ["new.md"]
+
+
+def test_since_excludes_deleted_files(tmp_path):
+    _init_git_repo(tmp_path)
+    write(tmp_path, "keep.md", "## Keep\n" + "sticks around " * 5)
+    write(tmp_path, "gone.md", "## Gone\n" + "about to be deleted " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "baseline")
+    before = _git_rev(tmp_path)
+
+    (tmp_path / "gone.md").unlink()
+    write(tmp_path, "keep.md", "## Keep\n" + "edited this time " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "edit keep, delete gone")
+
+    changed = docimport.changed_markdown_files(str(tmp_path), before)
+    assert [p.name for p in changed] == ["keep.md"]
+
+
+def test_since_respects_exclude_patterns(tmp_path):
+    _init_git_repo(tmp_path)
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "baseline")
+    before = _git_rev(tmp_path)
+
+    write(tmp_path, "docs/blog/post.md", "## Post\n" + "blog noise " * 5)
+    write(tmp_path, "AGENTS.md", "## Standards\n" + "real content " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add two files")
+
+    changed = docimport.changed_markdown_files(str(tmp_path), before, exclude=["docs/blog/*"])
+    assert [p.name for p in changed] == ["AGENTS.md"]
+
+
+def test_since_raises_a_clear_error_on_an_unknown_ref(tmp_path):
+    _init_git_repo(tmp_path)
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "baseline")
+    with pytest.raises(RuntimeError):
+        docimport.changed_markdown_files(str(tmp_path), "not-a-real-ref")
+
+
+def _git_rev(repo):
+    import subprocess
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_cli_since_only_creates_nodes_for_what_actually_changed(tmp_path, env):
+    _init_git_repo(tmp_path)
+    write(tmp_path, "unchanged.md", "## Old\n" + "never touched again " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "baseline")
+    before = _git_rev(tmp_path)
+
+    write(tmp_path, "new.md", "## New\n" + "brand new content " * 5)
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "add new.md")
+
+    cli.main(["import-docs", str(tmp_path), "--since", before, "--apply"])
+
+    assert len(env.nodes) == 1
+    (node,) = env.nodes.values()
+    assert node["links"] == ["new.md"]
+
+
 # ---- sections_for_file / plan -----------------------------------------
 
 def test_sections_below_min_chars_are_dropped(tmp_path):
