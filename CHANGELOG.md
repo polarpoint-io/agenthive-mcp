@@ -1,3 +1,24 @@
+# [1.6.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.5.0...v1.6.0) (2026-11-19)
+
+
+### Bug Fixes
+
+* **import-docs:** address PR review findings ([d7f47ab](https://github.com/polarpoint-io/agenthive-mcp/commit/d7f47ab5e129a4f8e76d458ac96e57168c1f1282))
+* **tag-filtering:** recompute approx_tokens_full_neighborhood after exclude_tags ([f90adf2](https://github.com/polarpoint-io/agenthive-mcp/commit/f90adf2bdb46418cd3a9ca865a0768704eb42fb3))
+
+
+### Features
+
+* backfill shared memory from a repo of markdown docs ([4646943](https://github.com/polarpoint-io/agenthive-mcp/commit/46469431b6d60cc5f28492e3f471914743029008))
+* **cli:** add import-docs to backfill memory from a markdown repo ([3078a30](https://github.com/polarpoint-io/agenthive-mcp/commit/3078a304ce0e40cdf3af2bf5ed9e1c69752ac656))
+* filter retrieve_context/retrieve_index by tag (include and exclude) ([f0a4e8d](https://github.com/polarpoint-io/agenthive-mcp/commit/f0a4e8d1c5e5780695b354dad3ae6ec0042142fc))
+* **import-docs:** accept a remote git URL for PATH ([c94f30d](https://github.com/polarpoint-io/agenthive-mcp/commit/c94f30d0e832f3a5cc4f554bc428299b606444e9))
+* **import-docs:** add --exclude to scope a repo before --apply ([70fe162](https://github.com/polarpoint-io/agenthive-mcp/commit/70fe162eb064b92e8b568513899ef3c5a9a5db07))
+* **import-docs:** add --since for CI-safe automated imports ([90b245a](https://github.com/polarpoint-io/agenthive-mcp/commit/90b245a22f80580cbbd40924b2dc467eede9abe7))
+* **import-docs:** filter and tag by a file's own frontmatter tags ([0117765](https://github.com/polarpoint-io/agenthive-mcp/commit/011776574ea3a09801fbe182b3518f6d9e686b92))
+* **import-docs:** make --apply safe to re-run before review catches up ([c835f2a](https://github.com/polarpoint-io/agenthive-mcp/commit/c835f2a0be4d627a157da18928b1db7024c35701))
+* **server:** filter retrieve_context/retrieve_index by tag ([cdf6900](https://github.com/polarpoint-io/agenthive-mcp/commit/cdf6900b825052a40c079716d0b50892ada71048))
+
 # [1.5.0](https://github.com/polarpoint-io/agenthive-mcp/compare/v1.4.0...v1.5.0) (2026-11-19)
 
 
