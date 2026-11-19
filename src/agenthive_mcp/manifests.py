@@ -52,10 +52,26 @@ _CURSOR: dict[str, Any] = {
     },
 }
 
+# Not a fourth format: GitHub Copilot Chat runs inside VS Code and reads
+# the same hook surface, so this is VS Code's manifest under the name
+# people actually set AGENTHIVE_HOST to on Copilot. hooks.detect_host()
+# has accepted "copilot" as a forced host since the Cursor/VS Code
+# split; it just had nowhere to install to or prune tools in. Kept as
+# its own dict (not literally `_VSCODE`) so the two can diverge later
+# without one edit silently changing both.
+_COPILOT: dict[str, Any] = {
+    "version": 1,
+    "hooks": {
+        event: [{"type": "command", "command": HOOK_COMMAND}]
+        for event in ("SessionStart", "PostToolUse", "Stop")
+    },
+}
+
 MANIFESTS: dict[str, dict[str, Any]] = {
     "claude": _CLAUDE,
     "vscode": _VSCODE,
     "cursor": _CURSOR,
+    "copilot": _COPILOT,
 }
 
 #: Where the repo keeps the browsable copy of each manifest.
@@ -63,21 +79,23 @@ REPO_PATHS: dict[str, str] = {
     "claude": "plugin/claude/settings.json",
     "vscode": "plugin/vscode/agenthive.json",
     "cursor": "plugin/cursor/hooks.json",
+    "copilot": "plugin/copilot/agenthive.json",
 }
 
 
 def destination(harness: str, project_dir: str | None = None) -> Path:
     """Absolute path this harness reads its hooks from.
 
-    VS Code's is per-project, so it resolves against ``project_dir``
-    (default: the current directory). The other two are per-user.
+    VS Code's and Copilot's are per-project, so they resolve against
+    ``project_dir`` (default: the current directory). The other two are
+    per-user.
     """
     home = Path(os.path.expanduser("~"))
     if harness == "claude":
         return home / ".claude" / "settings.json"
     if harness == "cursor":
         return home / ".cursor" / "hooks.json"
-    if harness == "vscode":
+    if harness in ("vscode", "copilot"):
         root = Path(project_dir) if project_dir else Path.cwd()
         return (root / ".github" / "hooks" / "agenthive.json").resolve()
     raise ValueError(f"unknown harness {harness!r}; expected one of {sorted(MANIFESTS)}")

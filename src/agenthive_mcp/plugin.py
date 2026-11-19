@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 
-from . import facts, hooks, loopguard, toolprune
+from . import codemap, facts, hooks, loopguard, toolprune
 from .client import SESSION_ID
 
 
@@ -25,17 +25,37 @@ def _enabled(name: str, default: bool = True) -> bool:
 
 
 def on_session_start(event: dict) -> str:
-    """Inject what the team already knows about working here.
+    """Inject what the team already knows about working here, plus what
+    this repo already contains.
 
-    This is the token-saving path: a fact that replaces fifteen file
-    reads pays for itself many times over, which recalling a decision
-    does not."""
-    if not _enabled("facts"):
-        return ""
-    block = facts.render(facts.fetch(event["cwd"]))
-    if block:
-        hooks.note(f"injected {len(block) // 4} tokens of team facts")
-    return block
+    Both are the same token-saving path: a fact or a map entry that
+    replaces fifteen file reads pays for itself many times over, which
+    recalling a decision does not. They're injected together because
+    they answer the same question from two sides - facts are reviewed
+    claims about how the repo behaves, the map is a deterministic read
+    of what the repo currently has - and a session that cannot reach
+    AgentHive should still get the map, since it costs nothing to
+    produce."""
+    blocks = []
+    if _enabled("facts"):
+        # Each mechanism wrapped on its own, per the module docstring: a
+        # timeout or bad JSON reaching AgentHive must not also cost the
+        # codemap block below (or vice versa) - this used to run both
+        # under one outer hooks.safely() in main(), so either one
+        # raising discarded whatever the other had already produced.
+        def _fetch_facts():
+            return facts.render(facts.fetch(event["cwd"]))
+
+        fact_block = hooks.safely(_fetch_facts)
+        if fact_block:
+            hooks.note(f"injected {len(fact_block) // 4} tokens of team facts")
+            blocks.append(fact_block)
+    if _enabled("codemap"):
+        map_block = hooks.safely(codemap.build, event["cwd"])
+        if map_block:
+            hooks.note(f"injected {len(map_block) // 4} tokens of codebase map")
+            blocks.append(map_block)
+    return "\n\n".join(blocks)
 
 
 def on_tool_result(event: dict) -> str:

@@ -1,6 +1,6 @@
 # The AgentHive plugin
 
-Three harnesses, one implementation. The hook logic lives in
+Four harnesses, one implementation. The hook logic lives in
 `src/agenthive_mcp/` and these directories are thin manifests pointing
 at the `agenthive-hook` entry point, so nothing is duplicated per IDE.
 
@@ -9,17 +9,20 @@ at the `agenthive-hook` entry point, so nothing is duplicated per IDE.
 | Claude Code | native | `~/.claude/settings.json` |
 | VS Code | same format as Claude Code | `.github/hooks/agenthive.json` |
 | Cursor | its own events | `~/.cursor/hooks.json` |
+| Copilot Chat | same format as Claude Code | `.github/hooks/agenthive.json` (same file as VS Code) |
 
 VS Code uses the same hook format as Claude Code, so both read the same
-payload and the same handlers serve them. Cursor's event names differ
-(`beforeSubmitPrompt`, `afterFileEdit`, `stop`) and are translated in
-`hooks.py` rather than duplicated downstream.
+payload and the same handlers serve them. Copilot Chat runs inside VS
+Code and reads the same hook surface - it is not a format of its own,
+just a different name people set `AGENTHIVE_HOST` to. Cursor's event
+names differ (`beforeSubmitPrompt`, `afterFileEdit`, `stop`) and are
+translated in `hooks.py` rather than duplicated downstream.
 
 ## Install
 
 ```sh
 pip install agenthive-mcp
-agenthive install --harness claude     # or: vscode, cursor
+agenthive install --harness claude     # or: vscode, cursor, copilot
 agenthive doctor
 ```
 
@@ -46,10 +49,11 @@ wrong — and a wrong guess turns session-end into a silent no-op.
 | | What it does | Switch |
 |---|---|---|
 | **Facts** | Injects short team facts at session start, with no anchor and no tool call. The one path that replaces exploration rather than adding to context. | `AGENTHIVE_FACTS` |
+| **Codemap** | Injects a map of what this repo already has - functions/classes/exports per directory - at session start. No model call, nothing to review. | `AGENTHIVE_CODEMAP` |
 | **Tool pruning** | Tracks which loaded tools a session uses, pools it across the team, writes a deny list once several people agree. | `AGENTHIVE_TOOLPRUNE` |
 | **Loop guard** | Notices a turn repeating the same failure and adds one note suggesting another approach. | `AGENTHIVE_LOOPGUARD` |
 
-All three default on. Set any to `off`.
+All default on. Set any to `off`.
 
 ## What it will not do
 
@@ -73,8 +77,12 @@ takes back exactly what the plugin wrote and leaves any rule you added.
   chase it.
 - **Policy can disable hooks or MCP** on Copilot Business and
   Enterprise. The plugin degrades to MCP-only and says so.
+- **Copilot Chat is not independently tested.** It is wired to the same
+  hook surface as VS Code on the assumption that Copilot Chat running
+  inside VS Code reads VS Code's hooks - reasonable, but unverified
+  against a live install.
 - **Tool pruning differs per harness** — it writes each one's own
-  settings, and what can be removed varies. On Cursor and VS Code this
-  may do nothing yet.
+  settings, and what can be removed varies. On Cursor, VS Code and
+  Copilot this may do nothing yet.
 - **None of this has been tested against a live IDE.** The logic is
   unit-tested; the contact with each harness is not.

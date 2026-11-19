@@ -26,6 +26,8 @@ TARGETS = {
     "claude": (".claude/settings.local.json", "claude"),
     "vscode": (".vscode/settings.json", "vscode"),
     "cursor": (".cursor/settings.json", "cursor"),
+    # Copilot Chat is VS Code, so it reads and writes the same settings.
+    "copilot": (".vscode/settings.json", "vscode"),
 }
 
 
