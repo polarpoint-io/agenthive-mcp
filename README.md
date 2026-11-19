@@ -266,8 +266,8 @@ Every tool here is a **member**-role AgentHive call - the same tier your persona
 
 | Tool | Description |
 |---|---|
-| `retrieve_context` | Bounded neighborhood of this team's reviewed, approved memory around a topic (`anchor`, `hops=2`, `hub_cutoff=15`) |
-| `retrieve_index` | Same traversal as `retrieve_context` with the bodies withheld - ids, titles, tiers, tags and a per-node token cost, so a session can choose what to read before paying for it (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`) |
+| `retrieve_context` | Bounded neighborhood of this team's reviewed, approved memory around a topic (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`, `exclude_tags`) |
+| `retrieve_index` | Same traversal as `retrieve_context` with the bodies withheld - ids, titles, tiers, tags and a per-node token cost, so a session can choose what to read before paying for it (`anchor`, `hops=2`, `hub_cutoff=15`, `tags`, `exclude_tags`) |
 | `fetch_nodes` | Full bodies for specific ids from `retrieve_index` (`ids`). Ids you are not entitled to come back in `missing`, not as an error |
 | `report_gaps` | What this team keeps searching for and never finds (`min_count`). Call at session start next to retrieval: if your work is on the list, your `log_session` closes a standing gap. Entries flagged `awaiting_review` already have an answer stuck in the queue - don't write it twice |
 | `log_session` | Log what happened this session as a memory node (`title`, `body`, `tags`, `links`, `agent_id`, `task_id`) - starts `pending`. Optionally carries the session's `outcome` and turn count, which is what the evidence endpoint measures |

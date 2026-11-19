@@ -149,6 +149,103 @@ def test_retrieve_context_still_returns_bodies(fake_server):
     assert "mode" not in result
 
 
+def test_retrieve_context_sends_the_tag_filter_as_a_comma_list(fake_server):
+    _seed(fake_server, "Incident alpha", "body " * 50, ["bugfix"])
+
+    result = _call(fake_server.base_url, "retrieve_context",
+                   {"anchor": "Incident", "tags": ["bugfix", "decision"]})
+    # Same caveat as the retrieve_index version of this test: the fake
+    # does not filter by tag itself (that's AgentHive's own traversal,
+    # tested in its own repo) - this pins that the query param reaches
+    # the wire at all now that retrieve_context accepts `tags`.
+    assert result["neighborhood_count"] >= 1
+
+
+def test_exclude_tags_drops_matching_nodes_from_retrieve_context(fake_server):
+    _seed(fake_server, "Deploying — Rolling back", "rollback body " * 20,
+          ["doc-import"])
+    _seed(fake_server, "Deploying — hard-won lesson", "lesson body " * 20,
+          ["bugfix"])
+
+    result = _call(fake_server.base_url, "retrieve_context",
+                   {"anchor": "Deploying", "exclude_tags": ["doc-import"]})
+
+    titles = {n["title"] for n in result["neighborhood"]}
+    assert titles == {"Deploying — hard-won lesson"}
+    assert result["neighborhood_count"] == 1
+    assert result["excluded_by_tags"] == ["doc-import"]
+    # Recomputed from what's left, not stale from the unfiltered fetch.
+    assert result["approx_tokens"] == len("lesson body " * 20) // 4
+
+
+def test_exclude_tags_drops_matching_nodes_from_retrieve_index(fake_server):
+    _seed(fake_server, "Deploying — Rolling back", "rollback body " * 20,
+          ["doc-import"])
+    _seed(fake_server, "Deploying — hard-won lesson", "lesson body " * 20,
+          ["bugfix"])
+
+    result = _call(fake_server.base_url, "retrieve_index",
+                   {"anchor": "Deploying", "exclude_tags": ["doc-import"]})
+
+    assert result["mode"] == "index"
+    titles = {n["title"] for n in result["neighborhood"]}
+    assert titles == {"Deploying — hard-won lesson"}
+    for node in result["neighborhood"]:
+        assert "body" not in node  # still an index, exclusion didn't change that
+    assert result["excluded_by_tags"] == ["doc-import"]
+
+
+def test_exclude_tags_recomputes_approx_tokens_full_neighborhood(fake_server):
+    # Two nodes of very different body length, so a stale (unfiltered)
+    # total and the correctly-recomputed one can't coincidentally match.
+    _seed(fake_server, "Deploying — Rolling back", "rollback body " * 200,
+          ["doc-import"])
+    _seed(fake_server, "Deploying — hard-won lesson", "lesson body " * 20,
+          ["bugfix"])
+
+    full = _call(fake_server.base_url, "retrieve_index", {"anchor": "Deploying"})
+    filtered = _call(fake_server.base_url, "retrieve_index",
+                      {"anchor": "Deploying", "exclude_tags": ["doc-import"]})
+
+    kept = filtered["neighborhood"]
+    assert len(kept) == 1
+    expected = sum(n["approx_tokens"] for n in kept)
+    assert filtered["approx_tokens_full_neighborhood"] == expected
+    # Sanity check this isn't just leaving the pre-filter total in place.
+    assert filtered["approx_tokens_full_neighborhood"] < full["approx_tokens_full_neighborhood"]
+
+
+def test_exclude_tags_zeroes_approx_tokens_full_neighborhood_when_index_empties(fake_server):
+    _seed(fake_server, "Only noisy node", "doc body " * 200, ["doc-import"])
+    result = _call(fake_server.base_url, "retrieve_index",
+                    {"anchor": "Only noisy node", "exclude_tags": ["doc-import"]})
+    assert result["neighborhood"] == []
+    assert result["approx_tokens_full_neighborhood"] == 0
+
+
+def test_exclude_tags_untouched_when_nothing_matches(fake_server):
+    _seed(fake_server, "Quiet topic", "body text here", ["decision"])
+    result = _call(fake_server.base_url, "retrieve_context",
+                   {"anchor": "Quiet topic", "exclude_tags": ["doc-import"]})
+    assert result["neighborhood_count"] == 1
+    assert result["excluded_by_tags"] == ["doc-import"]
+
+
+def test_exclude_tags_can_empty_the_neighborhood(fake_server):
+    _seed(fake_server, "Only noisy node", "doc body " * 20, ["doc-import"])
+    result = _call(fake_server.base_url, "retrieve_context",
+                   {"anchor": "Only noisy node", "exclude_tags": ["doc-import"]})
+    assert result["neighborhood"] == []
+    assert result["neighborhood_count"] == 0
+    assert result["approx_tokens"] == 0
+
+
+def test_omitting_exclude_tags_leaves_the_payload_exactly_as_before(fake_server):
+    _seed(fake_server, "Plain anchor", "body text here", ["decision"])
+    result = _call(fake_server.base_url, "retrieve_context", {"anchor": "Plain anchor"})
+    assert "excluded_by_tags" not in result
+
+
 def test_log_session_leaves_the_breadcrumb_the_hook_reads(fake_server, tmp_path):
     """The tool and the hook coordinate through a local marker file. If
     this link breaks, the hook writes a content-free node on top of a

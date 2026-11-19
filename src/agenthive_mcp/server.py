@@ -20,6 +20,14 @@ token already lets it do over the API directly, nothing more. See
 AgentHive's ADR.md ("Why not build an LLM-request proxy" and
 "Authentication") for the reasoning this follows.
 
+The one exception is `exclude_tags` on retrieve_context/retrieve_index:
+AgentHive's own tag filter (`tags`) is include-only, and there is no
+server-side exclude to pass through to. Dropping tagged nodes out of an
+already-fetched result is still just deciding what to show from data the
+API already sent back - no second request, nothing re-stored - so it
+stays here rather than becoming a change to AgentHive's own API for one
+caller's convenience.
+
 Only [member]-role calls are exposed - the same tier retrieve_context and
 log_session already sit at (see AgentHive's server.py route table).
 Admin-only calls (list_pending/approve/reject, user management,
@@ -62,22 +70,70 @@ mcp = FastMCP(
 )
 
 
+def _exclude_by_tags(payload: dict, exclude_tags: list[str]) -> dict:
+    """Drop any node carrying at least one of `exclude_tags` from an
+    already-fetched retrieve_context/retrieve_index payload.
+
+    Client-side, after the fact - see the module docstring for why this
+    is the one tool logic lives in here rather than just passing a query
+    param through. Recomputes neighborhood_count, approx_tokens, and (in
+    index mode) approx_tokens_full_neighborhood so a caller reading just
+    those fields isn't looking at stale numbers for a neighborhood that
+    no longer matches what came back."""
+    wanted = {str(t).strip().lower() for t in exclude_tags if str(t).strip()}
+    if not wanted:
+        return payload
+    kept = [
+        n for n in (payload.get("neighborhood") or [])
+        if not (wanted & {str(t).strip().lower() for t in (n.get("tags") or [])})
+    ]
+    narrowed = dict(payload)
+    narrowed["neighborhood"] = kept
+    narrowed["neighborhood_count"] = len(kept)
+    if kept and "body" in kept[0]:
+        narrowed["approx_tokens"] = sum(len(n.get("body") or "") for n in kept) // 4
+    elif payload.get("mode") == "index":
+        narrowed["approx_tokens"] = sum(len(n.get("title") or "") for n in kept) // 4
+    else:
+        narrowed["approx_tokens"] = 0
+    # Index mode's own approx_tokens_full_neighborhood is what fetching
+    # every INDEXED node's body would cost (AgentHive's retrieval.py
+    # project_index()) - each kept entry already carries that per-node
+    # cost as its own approx_tokens, upstream, so this sums to 0 for an
+    # empty index rather than staying at the pre-filter total.
+    if "approx_tokens_full_neighborhood" in narrowed:
+        narrowed["approx_tokens_full_neighborhood"] = sum(
+            n.get("approx_tokens", 0) for n in kept)
+    narrowed["excluded_by_tags"] = sorted(wanted)
+    return narrowed
+
+
 @mcp.tool()
-def retrieve_context(anchor: str, hops: int = 2, hub_cutoff: int = 15) -> dict:
+def retrieve_context(
+    anchor: str,
+    hops: int = 2,
+    hub_cutoff: int = 15,
+    tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
+) -> dict:
     """Retrieve this team's reviewed memory around a topic.
 
     Call once at the start of a session so you inherit what teammates
-    already learned. `anchor` is the topic to search around.
+    already learned. `anchor` is the topic to search around. `tags`
+    keeps only matching nodes; `exclude_tags` drops them instead.
 
     Large neighbourhoods come back as an index (titles and per-node
     costs, no bodies) - follow with fetch_nodes for the ones worth
     reading."""
     _, _, team_id = _get_config()
-    return _request(
-        "GET", f"/teams/{team_id}/memory/retrieve",
-        query={"anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff,
-               "session_id": _SESSION_ID},
-    )
+    query: dict = {"anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff,
+                   "session_id": _SESSION_ID}
+    if tags:
+        query["tags"] = ",".join(tags)
+    result = _request("GET", f"/teams/{team_id}/memory/retrieve", query=query)
+    if exclude_tags:
+        result = _exclude_by_tags(result, exclude_tags)
+    return result
 
 
 @mcp.tool()
@@ -86,12 +142,15 @@ def retrieve_index(
     hops: int = 2,
     hub_cutoff: int = 15,
     tags: list[str] | None = None,
+    exclude_tags: list[str] | None = None,
 ) -> dict:
     """Preview what retrieve_context would return, without the bodies.
 
     Returns ids, titles, tiers, tags and what each body would cost.
-    Follow with fetch_nodes. `tags` narrows it; the reserved ones are
-    decision, bugfix, security_alert, sensitive."""
+    Follow with fetch_nodes. `tags` narrows it to nodes carrying at
+    least one of them; the reserved ones are decision, bugfix,
+    security_alert, sensitive. `exclude_tags` does the opposite - drop
+    any node carrying at least one of them."""
     _, _, team_id = _get_config()
     query: dict = {
         "anchor": anchor, "hops": hops, "hub_cutoff": hub_cutoff, "mode": "index",
@@ -99,7 +158,10 @@ def retrieve_index(
     }
     if tags:
         query["tags"] = ",".join(tags)
-    return _request("GET", f"/teams/{team_id}/memory/retrieve", query=query)
+    result = _request("GET", f"/teams/{team_id}/memory/retrieve", query=query)
+    if exclude_tags:
+        result = _exclude_by_tags(result, exclude_tags)
+    return result
 
 
 @mcp.tool()
