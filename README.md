@@ -579,7 +579,26 @@ A new team usually already has a pile of markdown lying around -
 runbooks, READMEs, incident postmortems - that `log_session` will never
 retroactively capture because no agent session wrote it. `import-docs`
 turns a directory of it into the same pending nodes a session's
-`log_session` call would:
+`log_session` call would.
+
+**At a glance:**
+
+- One AgentHive node per heading-delimited section, not per file.
+- Reads a local directory *or* a git URL (`https://`, `ssh://`,
+  `git@host:path`, `.git`) - clones to a temp dir for the run, no
+  checkout of your own required.
+- `--exclude` scopes by path glob; `--only-tag` scopes by a file's own
+  frontmatter `tags:` instead, and carries them onto the created node
+  either way.
+- `--since REF` scopes to only what git shows changed - the mechanism
+  that makes this safe to run unattended on CI.
+- Dry run by default; `--apply` is the one flag that writes anything,
+  and is safe to re-run without duplicating what a previous run already
+  queued.
+- `--offset`/`--limit` batch a large backfill without flooding the
+  review queue, advancing without relying on local state.
+- Reports each node's real server status (`pending`/`approved`/
+  `rejected`), not an assumption.
 
 ```bash
 agenthive import-docs ./docs
@@ -709,6 +728,38 @@ agenthive import-docs . --offset 50 --limit 50 --apply   # the next batch after 
 | `--limit N` | unlimited | Cap how many *new* nodes one run creates - useful on a first pass over a large docs tree, so the queue fills in batches an admin can actually get through. |
 | `--force` | off | Resubmit sections already submitted by an earlier run, reviewed or not. |
 | `--apply` | off (dry run) | Actually write the nodes. Without it, nothing reaches AgentHive. |
+
+### A complete backfill, start to finish
+
+Putting the above together against a real docs site you don't have
+checked out locally - scope it, batch the first pass, then switch to
+`--since` for everything after:
+
+```bash
+# 1. See what's there before committing to anything. Everything in
+#    this repo is public marketing/blog content EXCEPT the tagged
+#    runbooks and KBs under docs/technical-practices.
+agenthive import-docs https://github.com/polarpoint-io/markdown-pol-docs \
+  --only-tag runbook --only-tag kb
+
+# 2. The count looks right - write the first batch, capped so the
+#    review queue fills in something an admin can get through today.
+agenthive import-docs https://github.com/polarpoint-io/markdown-pol-docs \
+  --only-tag runbook --only-tag kb --limit 50 --apply
+
+# 3. Tomorrow, the next 50 - no local state to rely on, since this is
+#    a fresh clone each time.
+agenthive import-docs https://github.com/polarpoint-io/markdown-pol-docs \
+  --only-tag runbook --only-tag kb --offset 50 --limit 50 --apply
+
+# ...repeat with --offset 100, --offset 150, etc. until a run reports
+# 0 new nodes - the backfill is done.
+
+# 4. From here on, only what actually changes - wire this into CI
+#    (see below) instead of running it by hand.
+agenthive import-docs . --only-tag runbook --only-tag kb \
+  --since "$(git rev-parse HEAD~1)" --apply
+```
 
 ### Running it automatically (CI)
 
