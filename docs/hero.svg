@@ -91,37 +91,39 @@
   <line x1="522" y1="188" x2="782" y2="188" stroke="#2d4a7a" stroke-width="1"/>
 
   <!-- Tools -->
-  <rect x="520" y="198" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="198" width="4" height="32" rx="2" fill="#3b82f6"/>
-  <text x="536" y="212" font-size="10" fill="#60a5fa" font-weight="bold">retrieve_context</text>
-  <text x="536" y="224" font-size="8" fill="#6e7681">Index above 800 tokens, automatically</text>
+  <rect x="520" y="198" width="264" height="28" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="198" width="4" height="28" rx="2" fill="#3b82f6"/>
+  <text x="536" y="211" font-size="10" fill="#60a5fa" font-weight="bold">retrieve_context</text>
+  <text x="536" y="222" font-size="8" fill="#6e7681">Index above 800 tokens, automatically</text>
 
-  <rect x="520" y="236" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="236" width="4" height="32" rx="2" fill="#22d3ee"/>
-  <text x="536" y="250" font-size="10" fill="#67e8f9" font-weight="bold">retrieve_index</text>
-  <text x="536" y="262" font-size="8" fill="#6e7681">Same walk, bodies withheld</text>
+  <rect x="520" y="230" width="264" height="28" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="230" width="4" height="28" rx="2" fill="#22d3ee"/>
+  <text x="536" y="243" font-size="10" fill="#67e8f9" font-weight="bold">retrieve_index</text>
+  <text x="536" y="254" font-size="8" fill="#6e7681">Same walk, bodies withheld · tag-narrowed</text>
 
-  <rect x="520" y="274" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="274" width="4" height="32" rx="2" fill="#22d3ee"/>
-  <text x="536" y="288" font-size="10" fill="#67e8f9" font-weight="bold">fetch_nodes</text>
-  <text x="536" y="300" font-size="8" fill="#6e7681">Only the bodies you picked</text>
+  <rect x="520" y="262" width="264" height="28" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="262" width="4" height="28" rx="2" fill="#22d3ee"/>
+  <text x="536" y="275" font-size="10" fill="#67e8f9" font-weight="bold">fetch_nodes</text>
+  <text x="536" y="286" font-size="8" fill="#6e7681">Only the bodies you picked</text>
 
-  <rect x="520" y="312" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="312" width="4" height="32" rx="2" fill="#10b981"/>
-  <text x="536" y="326" font-size="10" fill="#6ee7b7" font-weight="bold">log_session</text>
-  <text x="536" y="338" font-size="8" fill="#6e7681">Starts pending · outcome + turns</text>
+  <rect x="520" y="294" width="264" height="28" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="294" width="4" height="28" rx="2" fill="#a78bfa"/>
+  <text x="536" y="307" font-size="10" fill="#c4b5fd" font-weight="bold">report_gaps</text>
+  <text x="536" y="318" font-size="8" fill="#6e7681">What the team keeps searching for and missing</text>
 
-  <rect x="520" y="350" width="264" height="32" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
-  <rect x="520" y="350" width="4" height="32" rx="2" fill="#f59e0b"/>
-  <text x="536" y="364" font-size="10" fill="#fcd34d" font-weight="bold">confirm_memory</text>
-  <text x="536" y="376" font-size="8" fill="#6e7681">Still true? Reports, never removes</text>
+  <rect x="520" y="326" width="264" height="28" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="326" width="4" height="28" rx="2" fill="#10b981"/>
+  <text x="536" y="339" font-size="10" fill="#6ee7b7" font-weight="bold">log_session</text>
+  <text x="536" y="350" font-size="8" fill="#6e7681">Starts pending · outcome + turns</text>
 
-  <rect x="520" y="388" width="264" height="32" rx="6" fill="#1a0f10" stroke="#5f2020" stroke-width="1" stroke-dasharray="3 2"/>
-  <rect x="520" y="388" width="4" height="32" rx="2" fill="#6b7280"/>
-  <text x="536" y="402" font-size="10" fill="#9ca3af" font-weight="bold">agents / tasks · admin</text>
-  <text x="536" y="414" font-size="8" fill="#6e7681">Setup behind a flag · admin never</text>
+  <rect x="520" y="358" width="264" height="28" rx="6" fill="#0d1f38" stroke="#1e3a5f" stroke-width="1"/>
+  <rect x="520" y="358" width="4" height="28" rx="2" fill="#f59e0b"/>
+  <text x="536" y="371" font-size="10" fill="#fcd34d" font-weight="bold">confirm_memory</text>
+  <text x="536" y="382" font-size="8" fill="#6e7681">Still true? Reports, never removes</text>
 
-  <text x="652" y="438" text-anchor="middle" font-size="8" fill="#4b5563" letter-spacing="0.5">~378 tokens of definitions, sent on every request</text>
+  <text x="536" y="402" font-size="8" fill="#6e7681" font-style="italic">+ agents / tasks setup calls · admin, off by default</text>
+
+  <text x="652" y="438" text-anchor="middle" font-size="8" fill="#4b5563" letter-spacing="0.5">Six tool definitions, sent on every request</text>
 
   <!-- ─── CENTRE-LOWER: the hook, a second entry point ─────────── -->
   <g filter="url(#shadow)">
@@ -206,6 +208,10 @@
   <g transform="translate(538,607)">
     <rect width="150" height="20" rx="10" fill="#1f2937"/>
     <text x="75" y="14" text-anchor="middle" font-size="9" fill="#9ca3af">*besides the mcp package</text>
+  </g>
+  <g transform="translate(704,607)">
+    <rect width="140" height="20" rx="10" fill="#1f2937"/>
+    <text x="70" y="14" text-anchor="middle" font-size="9" fill="#9ca3af">import-docs backfill</text>
   </g>
   <g transform="translate(976,607)">
     <rect width="80" height="20" rx="10" fill="#0f2238"/>
